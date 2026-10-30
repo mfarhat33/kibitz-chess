@@ -1,0 +1,41 @@
+# Builds data/puzzles/ from the official Lichess puzzle database (CC0) and commits it.
+# Runs when the build script changes, or on demand from the Actions tab.
+name: Build puzzle data
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tools/build_puzzles.py
+      - .github/workflows/puzzles.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: puzzles
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install zstandard==0.23.0
+      - name: Download Lichess puzzle database
+        run: curl -fsSL --retry 3 -o /tmp/puzzles.csv.zst https://database.lichess.org/lichess_db_puzzle.csv.zst
+      - name: Build rating buckets
+        run: python3 tools/build_puzzles.py /tmp/puzzles.csv.zst
+      - name: Commit data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/puzzles
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Update puzzle data from the Lichess puzzle database"
+          git push
