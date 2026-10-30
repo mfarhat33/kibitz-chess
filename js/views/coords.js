@@ -91,6 +91,8 @@ export function mount(root) {
     $('#c-score', root).textContent = '0';
     $('#c-result', root).innerHTML = '';
     $('#c-start', root).disabled = true;
+    // on phones the Start button sits below the board: bring the whole board back into view
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     target = randomSquare();
     $('#c-target', root).textContent = target;
     endAt = performance.now() + DURATION;
