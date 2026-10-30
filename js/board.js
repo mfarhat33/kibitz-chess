@@ -382,18 +382,32 @@ export class Board {
     col.style.left = x * 12.5 + '%';
     if (y === 0) col.style.top = '0'; else col.style.bottom = '0';
     const order = y === 0 ? PROMO_ORDER : [...PROMO_ORDER].reverse();
+    // The tap that opened the picker is followed by a synthetic click on whatever is now under the
+    // finger (the picker itself), so ignore clicks for a moment after opening.
+    const openedAt = performance.now();
+    const fresh = () => performance.now() - openedAt < 400;
     for (const p of order) {
       const b = document.createElement('button');
       b.type = 'button';
       b.setAttribute('aria-label', { q: 'Queen', n: 'Knight', r: 'Rook', b: 'Bishop' }[p]);
       b.style.backgroundImage = `url(img/pieces/${color}${p.toUpperCase()}.svg)`;
       b.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
-      b.addEventListener('click', (e) => { e.stopPropagation(); this.closePromo(); this.finishMove(from, to, p); });
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (fresh()) return;
+        this.closePromo();
+        this.finishMove(from, to, p);
+      });
       col.appendChild(b);
     }
     wrap.appendChild(col);
     wrap.addEventListener('pointerdown', (e) => e.stopPropagation());
-    wrap.addEventListener('click', () => { this.closePromo(); this.select(null); for (const [sq, el] of this.els) this.placeEl(el, sq); });
+    wrap.addEventListener('click', () => {
+      if (fresh()) return;
+      this.closePromo();
+      this.select(null);
+      for (const [sq, el] of this.els) this.placeEl(el, sq);
+    });
     this.el.appendChild(wrap);
     this.promoEl = wrap;
   }

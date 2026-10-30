@@ -441,9 +441,12 @@ function gameView(root, state) {
   $('#b-flip', root).addEventListener('click', () => { board.flip(); renderBars(); });
   $('#b-resign', root).addEventListener('click', resign);
 
+  let ticks = 0;
   const tick = setInterval(() => {
     if (!clockActive()) return;
     renderClocks();
+    // unload saves are not guaranteed to finish, so keep the stored clock fresh
+    if (++ticks % 30 === 0) save();
     const c = chess.turn();
     if (live(c) <= 0) {
       state.clocks[c] = 0;
