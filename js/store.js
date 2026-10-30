@@ -193,6 +193,11 @@ function sanitize(data) {
       }; break;
       case 'quiz': out[k] = { best: Object.fromEntries(Object.entries(v?.best || {}).map(([m, x]) => [str(m, 20), num(x)])), runs: (Array.isArray(v?.runs) ? v.runs : []).map(r => ({ mode: str(r?.mode, 20), score: num(r?.score), t: num(r?.t) })) }; break;
       case 'coords': out[k] = { best: { ...(v?.best?.white != null ? { white: num(v.best.white) } : {}), ...(v?.best?.black != null ? { black: num(v.best.black) } : {}) } }; break;
+      case 'mistakes': out[k] = {
+        cards: Object.fromEntries(Object.entries(v?.cards || {}).filter(([id]) => typeof id === 'string' && id.length < 80).map(([id, c]) => [id, {
+          ease: num(c?.ease, 2.5), interval: num(c?.interval), reps: num(c?.reps), lapses: num(c?.lapses), due: num(c?.due), last: num(c?.last),
+        }])),
+      }; break;
       case 'daily': out[k] = { days: Object.fromEntries(Object.entries(v?.days || {}).filter(([d]) => /^\d{4}-\d{2}-\d{2}$/.test(d)).map(([d, x]) => [d, x === 1 ? 1 : 0])) }; break;
       case 'settings': out[k] = {
         theme: ['system', 'light', 'dark'].includes(v?.theme) ? v.theme : 'system',
@@ -249,6 +254,10 @@ export function mergeData(local, incoming) {
       out[k] = mergeLearn(local[k], v);
     } else if (k === 'quiz' || k === 'coords') {
       out[k] = mergeBest(local[k], v);
+    } else if (k === 'mistakes') {
+      const cards = { ...(v?.cards || {}) };
+      for (const [id, c] of Object.entries(local[k]?.cards || {})) if (!cards[id] || (c.last || 0) > (cards[id].last || 0)) cards[id] = c;
+      out[k] = { cards };
     } else if (k === 'daily') {
       out[k] = { days: { ...(v?.days || {}), ...Object.fromEntries(Object.entries(local[k]?.days || {}).filter(([d, x]) => x === 1 || !(d in (v?.days || {})))) } };
     } else if (!(k in local)) {

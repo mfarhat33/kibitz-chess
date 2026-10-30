@@ -6,7 +6,7 @@ import { positions, analyzePositions, classify, phaseStats, DEPTHS, LABELS, BAD_
 import { explainMove } from '../explain.js';
 import { evalGraph } from '../charts.js';
 import * as store from '../store.js';
-import { playTabs } from './tabs.js';
+import { playTabs, playFromPosition } from './tabs.js';
 import { icons, esc, toast, confirm, $, downloadFile, fmtDate, moveSound, sound } from '../ui.js';
 import { loadOpenings, isBook } from '../openings-data.js';
 
@@ -46,6 +46,8 @@ export async function mount(root, [id], isCurrent = () => true) {
   let alive = true;
   let graph = null;
   let retry = null;
+  let runId = 0;
+  let analysing = false;
 
   root.innerHTML = `
     ${playTabs('games')}
@@ -155,7 +157,8 @@ export async function mount(root, [id], isCurrent = () => true) {
         <button class="btn small" id="x-next-mistake" type="button">${icons.target} Next mistake</button>
       </div>`;
     $('#x-next-mistake', el).addEventListener('click', nextMistake);
-    $('#x-retry', el)?.addEventListener('click', () => startRetry(cur));
+    $('#x-retry', el)?.addEventListener('click', () => { if (!analysing) startRetry(cur); });
+    if (analysing) setBusy(true);
   }
 
   // ---------- retry: replay your mistake and let Stockfish grade the new move ----------
@@ -322,7 +325,8 @@ export async function mount(root, [id], isCurrent = () => true) {
       <div class="row">
         <button class="btn small" id="i-copy" type="button">Copy PGN</button>
         <button class="btn small" id="i-dl" type="button">${icons.download} PGN</button>
-        <a class="btn small" href="#/analysis/${game.startFen ? '' : game.moves.join(',')}" id="i-analyse">${icons.search} Analysis board</a>
+        <button class="btn small" type="button" id="i-analyse">${icons.search} Analysis board</button>
+        <button class="btn small" type="button" id="i-play">${icons.start} Play from this position</button>
         <button class="btn small" id="i-deep" type="button">${icons.retry} Deeper analysis</button>
         <button class="btn small danger" id="i-del" type="button">${icons.trash} Delete</button>
       </div>`;
@@ -330,7 +334,12 @@ export async function mount(root, [id], isCurrent = () => true) {
       try { await navigator.clipboard.writeText(pgnOf(game)); toast('PGN copied'); } catch { toast('Copy failed: use the download button'); }
     });
     $('#i-dl', el).addEventListener('click', () => downloadFile(`kibitz-${game.id}.pgn`, pgnOf(game), 'application/x-chess-pgn'));
-    $('#i-deep', el).addEventListener('click', () => runAnalysis(DEPTHS.deep));
+    $('#i-deep', el).addEventListener('click', () => { if (!analysing) runAnalysis(DEPTHS.deep); });
+    $('#i-play', el).addEventListener('click', () => playFromPosition(fens[cur + 1]));
+    $('#i-analyse', el).addEventListener('click', () => {
+      store.set('analysis.board', { startFen, line: game.moves.slice(), headers: null, orientation: colorName(user) });
+      location.hash = '#/analysis';
+    });
     $('#i-del', el).addEventListener('click', async () => {
       if (await confirm('Delete this game?', '<p class="muted">It will be removed from your history and insights.</p>', 'Delete', true)) {
         store.del('game:' + game.id);
@@ -341,6 +350,9 @@ export async function mount(root, [id], isCurrent = () => true) {
 
   async function runAnalysis(depth) {
     if (retry) exitRetry(false);
+    const run = ++runId;
+    analysing = true;
+    setBusy(true);
     const el = $('#explain', root);
     el.innerHTML = `
       <div class="explain-head"><span class="spinner"></span> Analysing the game</div>
@@ -351,14 +363,17 @@ export async function mount(root, [id], isCurrent = () => true) {
     const raw = await analyzePositions(eng, fens, {
       depth,
       moves: game.moves,
-      isCancelled: () => !alive,
+      isCancelled: () => !alive || run !== runId,
       onProgress: (d, t) => {
-        if (!alive) return;
-        $('#prog', root).style.width = (d / t * 100) + '%';
-        $('#prog-t', root).textContent = `${d} of ${t} positions`;
+        if (!alive || run !== runId) return;
+        const bar = $('#prog', root), txt = $('#prog-t', root);
+        if (bar) bar.style.width = (d / t * 100) + '%';
+        if (txt) txt.textContent = `${d} of ${t} positions`;
       },
     });
-    if (!alive) return;
+    if (!alive || run !== runId) return; // superseded by a newer run
+    analysing = false;
+    setBusy(false);
     if (!raw) {
       el.innerHTML = `<div class="status bad">${icons.x} The engine stopped before the review finished. This can happen on phones that are low on memory.</div>
         <button class="btn primary" id="x-again" type="button">${icons.retry} Try again</button>`;
@@ -374,6 +389,10 @@ export async function mount(root, [id], isCurrent = () => true) {
     };
     store.set('game:' + game.id, game);
     renderAll();
+  }
+
+  function setBusy(on) {
+    for (const id of ['#i-deep', '#x-retry']) { const b = $(id, root); if (b) b.disabled = on; }
   }
 
   function renderAll() {

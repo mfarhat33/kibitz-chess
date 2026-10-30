@@ -34,15 +34,22 @@ export class Engine {
     });
   }
 
-  /** The worker crashed or never started: settle every waiting search with null so no screen hangs. */
+  /**
+   * The worker crashed or never started: settle every waiting search with null so no screen hangs,
+   * then try a fresh worker (a few times) before giving up for good.
+   */
   fail() {
-    this.failed = true;
     this.isReady = false;
     clearTimeout(this.watchdog);
     const pending = [this.job, ...this.queue].filter(Boolean);
     this.job = null;
     this.queue = [];
     for (const j of pending) j.resolve?.(null);
+    try { this.worker?.terminate(); } catch { /* already gone */ }
+    this.restarts = (this.restarts || 0) + 1;
+    if (this.restarts > 3) { this.failed = true; return; }
+    this.opts = {};
+    setTimeout(() => { this.ready = this.start().catch(() => {}); }, 300);
   }
 
   /** Replace a hung worker with a fresh one; the current search resolves null. */

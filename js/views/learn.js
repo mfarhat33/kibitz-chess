@@ -89,6 +89,7 @@ function lessonView(root, id) {
   let alive = true;
   let timers = [];
   let player = null;
+  let stepToken = 0; // bumped on every step change so late engine answers are ignored
   const later = (fn, ms) => timers.push(setTimeout(fn, ms));
   const card = $('#l-card', root);
   const total = lesson.steps.length + (lesson.practice ? 1 : 0);
@@ -105,6 +106,9 @@ function lessonView(root, id) {
   }
 
   function step(n) {
+    const tok = ++stepToken;
+    engine.cancel();
+    board.opts.onMove = null;
     const s = lesson.steps[n];
     if (!s) { if (lesson.practice) practice(); else finish(null); return; }
     const chess = new Chess(s.fen);
@@ -143,14 +147,14 @@ function lessonView(root, id) {
       if (chess.turn() !== me) {
         busy = true;
         render();
-        later(() => { if (!alive) return; play(s.line[ply]); busy = false; advance(); }, 450);
+        later(() => { if (!alive || tok !== stepToken) return; play(s.line[ply]); busy = false; advance(); }, 450);
         return;
       }
       render();
       status('Your move', 'info');
     };
     board.opts.onMove = async (from, to, promo) => {
-      if (busy || chess.turn() !== me) return;
+      if (busy || tok !== stepToken || chess.turn() !== me) return;
       const legal = chess.moves({ verbose: true }).find(m => m.from === from && m.to === to && (!m.promotion || m.promotion === (promo || 'q')));
       if (!legal) return;
       const uci = from + to + (legal.promotion || '');
@@ -174,7 +178,7 @@ function lessonView(root, id) {
         const r1 = await engine.analyze(before, { depth: 14, multipv: 1 });
         const r2 = await engine.analyze(test.fen(), { depth: 14, multipv: 1 });
         busy = false;
-        if (!alive || chess.fen() !== before) return;
+        if (!alive || tok !== stepToken || chess.fen() !== before) return;
         if (r1 && r2 && r1.lines[0] && r2.lines[0]) {
           const sc = (l) => (l.mate != null ? (l.mate > 0 ? 100000 - l.mate : -100000 - l.mate) : l.cp);
           const best = sc(r1.lines[0]);
@@ -191,7 +195,7 @@ function lessonView(root, id) {
       sound('bad');
       board.shake();
       board.setMarks([{ sq: to, cls: 'wrong' }]);
-      later(() => { board.setMarks([]); render(); }, 600);
+      later(() => { if (tok !== stepToken) return; board.setMarks([]); render(); }, 600);
       status(s.strict ? `${esc(san)} is playable, but it is not the idea of this step. Try again.` : `${esc(san)} is not the right idea. Try again, or tap Show me.`, 'bad');
     };
     $('#l-show', card).addEventListener('click', () => {
@@ -205,6 +209,9 @@ function lessonView(root, id) {
   }
 
   async function practice() {
+    ++stepToken;
+    engine.cancel();
+    board.opts.onMove = null;
     const cfg = lesson.practice;
     let k = 0, solved = 0;
     const seen = new Set();
@@ -319,12 +326,13 @@ function drillView(root, id) {
     token++;
     opp.newGame();
     chess = new Chess(drill.fen);
-    me = chess.turn();
+    me = drill.side || chess.turn();
     myMoves = 0; over = false; last = null; hintsUsed = 0;
     board.setOrientation(colorName(me));
     board.setArrows([]);
     render();
     status(goalText());
+    if (chess.turn() !== me) engineReply();
   }
 
   function end(ok, msg) {
@@ -360,9 +368,15 @@ function drillView(root, id) {
     }
     if (drill.goal !== 'hold' && myMoves >= drill.limit) { end(false, `Out of moves: no ${drill.goal === 'mate' ? 'mate' : 'promotion'} within ${drill.limit}.`); return; }
     if (drill.goal === 'hold' && myMoves >= drill.limit) { end(true, `You held for ${drill.limit} moves. Draw secured!`); return; }
+    engineReply();
+  }
+
+  async function engineReply() {
+    const t = token;
     status('<span class="spinner"></span> Stockfish is thinking…');
     const r = await opp.analyze(chess.fen(), { depth: 20, movetime: 500 });
-    if (!alive || t !== token || !r?.bestmove) return;
+    if (!alive || t !== token) return;
+    if (!r?.bestmove) { status('The engine stopped responding. Tap Restart to try again.', 'bad'); return; }
     const om = playUci(chess, r.bestmove);
     last = [om.from, om.to];
     moveSound(om, chess);

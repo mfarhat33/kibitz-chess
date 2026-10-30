@@ -15,13 +15,13 @@ function balance(chess, color) {
 }
 
 /**
- * Plays a line and returns the mover's material balance once the captures settle,
- * plus the captures made along the way.
+ * Plays an engine line and returns the mover's material balance at the last quiet point
+ * (no check to answer and no capture pending), plus the captures made up to that point.
  */
-export function playOut(fen, ucis, color, maxPlies = 8) {
+export function playOut(fen, ucis, color, maxPlies = 10) {
   const c = new Chess(fen);
   const start = balance(c, color);
-  let settled = start;
+  let settled = start, settledCaps = 0;
   const caps = [];
   const n = Math.min(ucis.length, maxPlies);
   for (let i = 0; i < n; i++) {
@@ -29,13 +29,45 @@ export function playOut(fen, ucis, color, maxPlies = 8) {
     if (!m) break;
     if (m.captured) caps.push({ by: m.color, piece: m.captured, square: m.to, san: m.san, ply: i, attacker: m.piece });
     const next = i + 1 < n ? ucis[i + 1] : null;
-    if (!next || !isCapture(c, next)) {
-      // quiet point: no recapture pending
-      settled = balance(c, color);
-      if (i >= 2) break;
-    }
+    if (!c.inCheck() && (!next || !isCapture(c, next))) { settled = balance(c, color); settledCaps = caps.length; }
   }
-  return { start, end: settled, caps };
+  return { start, end: settled, caps: caps.slice(0, settledCaps) };
+}
+
+const NUM = ['', '', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'];
+/** ['n', 'p', 'p'] -> "a knight and two pawns" */
+function pieceList(types) {
+  const cnt = {};
+  for (const t of types) cnt[t] = (cnt[t] || 0) + 1;
+  const parts = ['q', 'r', 'b', 'n', 'p'].filter(t => cnt[t]).map(t => (cnt[t] === 1 ? article(PIECE_NAMES[t]) : `${NUM[cnt[t]] || cnt[t]} ${PIECE_NAMES[t]}s`));
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] || '';
+}
+/** What `color` gives up (and gets back) in a played-out line, e.g. "a knight for a pawn". */
+function lossText(caps, color) {
+  const lost = caps.filter(c => c.by !== color).map(c => c.piece);
+  const won = caps.filter(c => c.by === color).map(c => c.piece);
+  if (!lost.length) return null;
+  return won.length ? `${pieceList(lost)} for ${pieceList(won)}` : pieceList(lost);
+}
+function gainText(caps, color) {
+  const won = caps.filter(c => c.by === color).map(c => c.piece);
+  const lost = caps.filter(c => c.by !== color).map(c => c.piece);
+  if (!won.length) return null;
+  return lost.length ? `${pieceList(won)} for ${pieceList(lost)}` : pieceList(won);
+}
+
+/** Could the opponent already win the piece on `sq` before the move was played? */
+function wasHanging(fen, sq, color) {
+  const parts = fen.split(' ');
+  parts[1] = color === 'w' ? 'b' : 'w';
+  parts[3] = '-';
+  let c;
+  try { c = new Chess(parts.join(' ')); } catch { return false; }
+  const p = c.get(sq);
+  if (!p || p.color !== color) return false;
+  const caps = c.moves({ verbose: true }).filter(m => m.to === sq && m.captured).map(m => (m.piece === 'k' ? 100 : VALUES[m.piece])).sort((a, b) => a - b);
+  if (!caps.length) return false;
+  return !c.attackers(sq, color).length || caps[0] < VALUES[p.type];
 }
 
 function isCapture(chess, uci) {
@@ -44,13 +76,6 @@ function isCapture(chess, uci) {
   return !!from && from.type === 'p' && uci[0] !== uci[2];
 }
 
-function materialWords(n) {
-  if (n >= 9) return 'a lot of material';
-  if (n >= 5) return 'a rook\'s worth of material';
-  if (n >= 3) return 'a piece';
-  if (n === 2) return 'two pawns';
-  return 'a pawn';
-}
 
 /** Pieces (value >= 3, or the king) of `victim` attacked by the piece standing on `sq`. */
 function forkTargets(chess, sq, victim) {
@@ -115,6 +140,9 @@ export function explainMove(i, game) {
   const evalShift = `${formatScore(before)} → ${formatScore(after)}`;
   const lines = [];
 
+  if (label === 'forced') {
+    return { headline: `${san} was forced.`, lines: ['It was the only legal move.'], bestSan };
+  }
   if (label === 'book') {
     return { headline: `${san} is a book move.`, lines: ['A well-known opening move that theory and strong players use.'], bestSan };
   }
@@ -137,6 +165,7 @@ export function explainMove(i, game) {
   if (label === 'best') {
     if (a.mate != null && a.mate > 0) lines.push(`It keeps a forced mate in ${a.mate}.`);
     else if (after?.mate === 0) lines.push('Checkmate. Nothing better exists.');
+    else if (bestUci && bestUci !== moves[i]) lines.push(`It is at least as strong as the engine's first choice, ${bestSan} (${formatScore(after)}).`);
     else lines.push(`It is the engine's top choice here (${formatScore(after)}).`);
     return { headline: `${san} is the best move.`, lines, bestSan };
   }
@@ -165,36 +194,37 @@ export function explainMove(i, game) {
     const shown = full.length >= -a.mate * 2 - 1 ? formatLine(fens[i + 1], full) : `starting with ${replySan}`;
     lines.push(`This allows a forced mate in ${-a.mate}: ${shown}.`);
   } else {
-    // 2. material
-    const afterPlayed = playOut(fens[i + 1], review.pv[i + 1] || [], color);
+    // 2. material: compare where the played line and the best line settle, and only say so when
+    // the evaluation agrees that material is the story
+    const pawns = (x) => (x.mate != null ? (x.mate > 0 ? 20 : -20) : (x.cp ?? 0) / 100);
+    const evalLoss = pawns(b) - pawns(a);
+    const played = playOut(fens[i + 1], review.pv[i + 1] || [], color);
     const bestFull = bestUci ? [bestUci, ...(review.pv[i] || []).slice(1)] : [];
-    const afterBest = playOut(fens[i], bestFull, color);
-    const base = afterBest.start;
-    const lost = base - afterPlayed.end;
-    const gained = afterBest.end - base;
+    const bestL = playOut(fens[i], bestFull, color);
+    const matLoss = bestL.end - played.end;
     const moved = moves[i].slice(2, 4);
-    const firstOpp = afterPlayed.caps.find(c => c.by !== color);
-    if (lost >= 1 && firstOpp && firstOpp.ply === 0) {
-      const what = PIECE_NAMES[firstOpp.piece];
-      const posAfter = new Chess(fens[i + 1]);
-      const defended = posAfter.attackers(firstOpp.square, color).length > 0;
-      const by = PIECE_NAMES[firstOpp.attacker];
-      if (firstOpp.square === moved && !defended) {
-        lines.push(`${v.Poss} ${what} on ${moved} can simply be taken: ${replySan} wins it for free.`);
-      } else if (firstOpp.square === moved) {
-        lines.push(`${v.Poss} ${what} on ${moved} can be taken by a ${by}: after ${formatLine(fens[i + 1], refuteLine.slice(0, 3))}, ${v.subj} ${v.loses} ${materialWords(lost)}.`);
-      } else if (!defended) {
-        lines.push(`This leaves ${v.poss} ${what} on ${firstOpp.square} undefended, and ${replySan} wins it.`);
+    const firstCap = played.caps.find(c => c.ply === 0 && c.by !== color);
+    const lostWhat = lossText(played.caps, color);
+    if (matLoss >= 1 && evalLoss >= Math.min(matLoss, 9) * 0.6) {
+      const line3 = formatLine(fens[i + 1], refuteLine.slice(0, 3));
+      const tail = lostWhat ? `, ${v.subj} ${v.loses} ${lostWhat}` : '';
+      if (firstCap) {
+        const what = PIECE_NAMES[firstCap.piece];
+        const sq = firstCap.square;
+        const defended = new Chess(fens[i + 1]).attackers(sq, color).length > 0;
+        const by = PIECE_NAMES[firstCap.attacker];
+        if (sq === moved && !defended) lines.push(`${v.Poss} ${what} on ${sq} is left hanging: ${replySan} wins it${played.caps.length > 1 && lostWhat ? ` (after ${line3}${tail})` : ''}.`);
+        else if (sq === moved) lines.push(`${v.Poss} ${what} on ${sq} can be taken by a ${by}: after ${line3}${tail}.`);
+        else if (wasHanging(fens[i], sq, color)) lines.push(`${v.Poss} ${what} on ${sq} was already under attack, and ${san} does nothing about it: ${replySan} wins it${played.caps.length > 1 && lostWhat ? ` (after ${line3}${tail})` : ''}.`);
+        else if (!defended) lines.push(`This leaves ${v.poss} ${what} on ${sq} undefended, and ${replySan} wins it.`);
+        else lines.push(`${v.Poss} ${what} on ${sq} is attacked by a ${by}: after ${line3}${tail}.`);
       } else {
-        lines.push(`${v.Poss} ${what} on ${firstOpp.square} is attacked by a ${by}: ${replySan} wins ${materialWords(lost)}.`);
+        const fork = replyFork(fens[i + 1], review.pv[i + 1], color, v);
+        if (fork) lines.push(fork + (lostWhat ? ` In the end ${v.subj} ${v.loses} ${lostWhat}.` : ''));
+        else lines.push(`It allows ${formatLine(fens[i + 1], refuteLine.slice(0, 4))}${lostWhat ? `, and ${v.subj} ${v.loses} ${lostWhat}` : ''}.`);
       }
-    } else if (lost >= 1) {
-      const fork = replyFork(fens[i + 1], review.pv[i + 1], color, v);
-      lines.push(fork || `It allows ${formatLine(fens[i + 1], refuteLine.slice(0, 4))}, and ${v.subj} ${v.loses} ${materialWords(lost)}.`);
-    } else if (gained >= 2 && gained - Math.max(0, -lost) >= 2) {
-      const myCap = afterBest.caps.find(c => c.by === color);
-      const what = myCap ? `the ${PIECE_NAMES[myCap.piece]} on ${myCap.square}` : materialWords(gained);
-      lines.push(`${v.Subj} missed a chance to win ${gained >= 3 && myCap ? what : materialWords(gained)} with ${bestSan}.`);
+    } else if (matLoss >= 2 && evalLoss >= 1 && gainText(bestL.caps, color)) {
+      lines.push(`${v.Subj} missed ${bestSan}, which wins ${gainText(bestL.caps, color)}.`);
     } else if (label !== 'miss') {
       // 3. positional / evaluation swing
       const wb = winPct(b), wa = winPct(a);

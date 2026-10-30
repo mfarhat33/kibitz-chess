@@ -1,6 +1,6 @@
 // Play vs bots: setup, game loop, clocks, hints, takebacks. Finished games are saved for review.
 import { Board, pieceUrl } from '../board.js';
-import { Chess, dests, checkSquare, playUci, gameOverInfo, canMate, material, colorName, uciToMove } from '../chessutil.js';
+import { Chess, dests, checkSquare, playUci, gameOverInfo, canMate, material, colorName, uciToMove, START_FEN } from '../chessutil.js';
 import { getEngine } from '../engine.js';
 import { LEVELS, DEFAULT_LEVEL, chooseBotMove, levelLabel } from '../bot.js';
 import * as store from '../store.js';
@@ -40,6 +40,9 @@ function prefs() {
 // ---------------- setup ----------------
 function setupView(root) {
   const p = prefs();
+  // "Play vs bot from here" on the analysis board or in a review hands over a position
+  const fromFen = store.get('play.fromFen');
+  if (fromFen) p.color = fromFen.split(' ')[1];
   root.innerHTML = `
     ${playTabs('new')}
     <div class="stage">
@@ -47,6 +50,7 @@ function setupView(root) {
       <div class="side-col">
         <section class="card stack" aria-labelledby="setup-h">
           <h1 id="setup-h">Play a bot</h1>
+          ${fromFen ? `<div class="status info small">Starting from a custom position (${fromFen.split(' ')[1] === 'w' ? 'White' : 'Black'} to move). <button class="btn small" id="clear-fen" type="button">Use the normal start</button></div>` : ''}
           <div class="level-display">
             <div><div class="elo" id="lv-elo"></div><div class="lname" id="lv-name"></div></div>
             <div class="avatar bot" id="lv-av" style="width:52px;height:52px;font-size:1.1rem;border-radius:14px"></div>
@@ -70,7 +74,8 @@ function setupView(root) {
       </div>
     </div>`;
   const preview = $('#preview', root);
-  const board = new Board(preview, { fen: new Chess().fen(), coordinates: store.getSettings().coords });
+  const board = new Board(preview, { fen: fromFen || new Chess().fen(), coordinates: store.getSettings().coords, orientation: fromFen?.split(' ')[1] === 'b' ? 'black' : 'white' });
+  $('#clear-fen', root)?.addEventListener('click', () => { store.del('play.fromFen'); board.destroy(); setupView(root); });
   const lv = $('#lv', root);
   const showLevel = () => {
     const l = LEVELS[+lv.value];
@@ -92,12 +97,13 @@ function setupView(root) {
   $('#start', root).addEventListener('click', () => {
     store.set('play.prefs', { level: +lv.value, color, tc });
     board.destroy();
-    startNew(root, { level: +lv.value, color, tc });
+    startNew(root, { level: +lv.value, color, tc, startFen: fromFen || null });
   });
   ctx = { destroy: () => board.destroy() };
 }
 
-function startNew(root, { level, color, tc }) {
+function startNew(root, { level, color, tc, startFen = null }) {
+  store.del('play.fromFen');
   const userColor = color === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : color;
   const t = TCS.find(x => x.id === tc) || TCS[0];
   const state = {
@@ -109,6 +115,7 @@ function startNew(root, { level, color, tc }) {
     clocks: t.base ? { w: t.base, b: t.base } : null,
     clockLog: t.base ? [{ w: t.base, b: t.base }] : null,
     moves: [],
+    startFen: startFen && startFen !== START_FEN ? startFen : null,
     takebacks: 0,
     hints: 0,
     over: false,
@@ -125,7 +132,9 @@ function gameView(root, state) {
   const tc = TCS.find(x => x.id === state.tc) || null;
   const user = state.userColor;
   const bot = user === 'w' ? 'b' : 'w';
-  const chess = new Chess();
+  const startFen = state.startFen || START_FEN;
+  const botFirst = startFen.split(' ')[1] === bot;
+  const chess = new Chess(startFen);
   for (const u of state.moves) if (!playUci(chess, u)) break;
   const settings = store.getSettings();
 
@@ -230,23 +239,26 @@ function gameView(root, state) {
 
   function renderMoves() {
     const sans = chess.history();
-    let html = '';
+    // custom starts can begin with Black to move and at any move number
+    const shift = startFen.split(' ')[1] === 'b' ? 1 : 0;
+    const no0 = +(startFen.split(' ')[5] || 1);
+    let html = shift ? `<span class="n">${no0}...</span>` : '';
     sans.forEach((s, i) => {
-      if (i % 2 === 0) html += `<span class="n">${i / 2 + 1}.</span>`;
+      if ((i + shift) % 2 === 0) html += `<span class="n">${no0 + (i + shift) / 2}.</span>`;
       html += `<span class="${i === sans.length - 1 ? 'cur' : ''}">${esc(s)}</span>`;
     });
     const strip = $('#moves-m', root);
     strip.innerHTML = html || '<span class="muted">No moves yet</span>';
     strip.scrollLeft = strip.scrollWidth;
-    let grid = '';
+    let grid = shift ? `<span class="num">${no0}.</span><span class="mv muted">…</span>` : '';
     sans.forEach((s, i) => {
-      if (i % 2 === 0) grid += `<span class="num">${i / 2 + 1}.</span>`;
+      if ((i + shift) % 2 === 0) grid += `<span class="num">${no0 + (i + shift) / 2}.</span>`;
       grid += `<span class="mv${i === sans.length - 1 ? ' cur' : ''}">${esc(s)}</span>`;
     });
     const g = $('#moves', root);
     g.innerHTML = grid;
     g.scrollTop = g.scrollHeight;
-    const op = openingOf(state.moves);
+    const op = state.startFen ? null : openingOf(state.moves);
     const txt = op ? `${op.eco} · ${op.name}` : '';
     $('#opening', root).textContent = txt;
     $('#opening-m', root).textContent = txt;
@@ -272,7 +284,7 @@ function gameView(root, state) {
     }
     const busy = state.over;
     $('#b-hint', root).disabled = busy || chess.turn() !== user;
-    $('#b-undo', root).disabled = busy || state.moves.length === 0 || (state.moves.length === 1 && user === 'b' && !thinking);
+    $('#b-undo', root).disabled = busy || state.moves.length === 0 || (state.moves.length === 1 && botFirst && !thinking);
     $('#b-resign', root).disabled = busy;
   }
 
@@ -330,14 +342,21 @@ function gameView(root, state) {
     const t0 = performance.now();
     let uci = null;
     try {
-      uci = await chooseBotMove(botEngine, chess.fen(), level, { timeLeft: tc ? live(bot) : null });
+      uci = await chooseBotMove(botEngine, chess.fen(), level, { timeLeft: tc ? live(bot) : null, history: { startFen, moves: state.moves } });
     } catch (err) { console.error(err); }
     const minDelay = tc ? Math.min(500, (live(bot) || 0) / 50) : 350 + Math.random() * 450;
     const spent = performance.now() - t0;
     if (spent < minDelay) await sleep(minDelay - spent);
     if (!alive || token !== thinkToken || state.over) return;
     thinking = false;
-    if (!uci) { toast('The bot could not find a move.'); return; }
+    if (!uci) {
+      // the engine crashed or timed out: say so and let the player retry instead of moving at random
+      const st = $('#status', root);
+      st.className = 'status bad';
+      st.innerHTML = `The engine stopped responding. <button class="btn small" id="b-retry" type="button">${icons.retry} Retry</button>`;
+      $('#b-retry', root).addEventListener('click', () => botTurn());
+      return;
+    }
     applyMove(uci);
   }
 
@@ -349,8 +368,9 @@ function gameView(root, state) {
     thinkToken++;
     botEngine.cancel();
     hintEngine.cancel();
-    const op = openingOf(state.moves);
+    const op = state.startFen ? null : openingOf(state.moves);
     const record = {
+      startFen: state.startFen || undefined,
       id: state.id,
       date: state.startedAt,
       endedAt: state.endedAt,
@@ -386,7 +406,7 @@ function gameView(root, state) {
     $('#b-rematch', after).addEventListener('click', () => {
       const p = prefs();
       unmount();
-      startNew(root, { ...p, level: state.level, tc: state.tc || 'none' });
+      startNew(root, { ...p, level: state.level, tc: state.tc || 'none', startFen: state.startFen });
     });
     $('#b-new', after).addEventListener('click', () => { unmount(); setupView(root); });
     after.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
@@ -398,7 +418,7 @@ function gameView(root, state) {
     const btn = $('#b-hint', root);
     btn.disabled = true;
     hintEngine.cancel();
-    const r = await hintEngine.analyze(fen, { depth: 16, movetime: 1500 });
+    const r = await hintEngine.analyze(fen, { depth: 16, movetime: 1500, startFen, moves: state.moves });
     if (!alive) return;
     setStatus();
     if (!r?.bestmove || chess.fen() !== fen) return;
@@ -421,8 +441,8 @@ function gameView(root, state) {
       n = 2;
     }
     if (state.moves.length < n) n = state.moves.length;
-    // never undo the bot's opening move when you play Black
-    if (user === 'b' && state.moves.length - n < 1) n = state.moves.length - 1;
+    // never undo the bot's first move when it moved first
+    if (botFirst && state.moves.length - n < 1) n = state.moves.length - 1;
     if (n <= 0) { toast('Nothing to take back'); render(false); return; }
     // clocks go back to where they stood, except that your own thinking time is never refunded
     if (state.clocks) {
@@ -433,7 +453,7 @@ function gameView(root, state) {
     state.moves.splice(-n, n);
     if (state.clockLog) state.clockLog.length = state.moves.length + 1;
     state.takebacks++;
-    chess.reset();
+    chess.load(startFen);
     for (const u of state.moves) playUci(chess, u);
     const h = chess.history({ verbose: true });
     lastMove = h.length ? [h[h.length - 1].from, h[h.length - 1].to] : null;

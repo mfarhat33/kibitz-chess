@@ -74,6 +74,8 @@ async function makeQuestion(kind, seen) {
   const om = playUci(c, pz.moves[0]);
   const sol = pz.moves[1];
   const legal = c.moves({ verbose: true });
+  // need at least four sensible choices
+  if (legal.length < 4) return makeQuestion(kind, seen);
   const solMove = legal.find(m => m.from + m.to + (m.promotion || '') === sol);
   const isMate = (m) => { const t = new Chess(c.fen()); t.move(m); return t.isCheckmate(); };
   // distractors: other legal moves, preferring forcing ones, never another mate
@@ -127,7 +129,7 @@ async function run(root, mode) {
       <div class="row between nowrap"><span class="tiny muted">Question ${n} of ${COUNT}</span><span class="tiny muted">${results.filter(Boolean).length} correct</span></div>
       <div class="progress"><i style="width:${(n - 1) / COUNT * 100}%"></i></div>
       <h2 style="margin:0">${esc(q.prompt)}</h2>
-      <div class="stack" id="q-choices">${q.choices.map((c, i) => `<button class="btn block" type="button" data-i="${i}" style="justify-content:flex-start">${esc(c.label)}</button>`).join('')}</div>
+      <div class="quiz-choices" id="q-choices">${q.choices.map((c, i) => `<button class="btn block" type="button" data-i="${i}">${esc(c.label)}</button>`).join('')}</div>
       <div id="q-after"></div>`;
     card.querySelector('#q-choices').addEventListener('click', (e) => {
       const b = e.target.closest('[data-i]');

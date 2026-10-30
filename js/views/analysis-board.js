@@ -6,7 +6,7 @@ import { winPct } from '../analysis.js';
 import * as store from '../store.js';
 import { icons, esc, toast, dialog, $, moveSound } from '../ui.js';
 import { loadOpenings, openingOf } from '../openings-data.js';
-import { playTabs } from './tabs.js';
+import { playTabs, playFromPosition } from './tabs.js';
 
 let ctx = null;
 export function unmount() { ctx?.destroy(); ctx = null; }
@@ -47,6 +47,7 @@ export async function mount(root, params) {
           <div class="row">
             <button class="btn small" id="a-import" type="button">${icons.upload} Load PGN / FEN</button>
             <button class="btn small" id="a-review" type="button">${icons.eye} Review this game</button>
+            <button class="btn small" id="a-play" type="button">${icons.start} Play vs bot from here</button>
             <button class="btn small" id="a-clear" type="button">${icons.retry} New board</button>
           </div>
           <div class="tiny muted" id="a-headers"></div>
@@ -228,6 +229,9 @@ export async function mount(root, params) {
   $('#a-flip', root).addEventListener('click', () => { board.flip(); update(); });
   $('#a-import', root).addEventListener('click', importDialog);
   $('#a-review', root).addEventListener('click', reviewGame);
+  $('#a-play', root).addEventListener('click', async () => {
+    if ((await playFromPosition(chessAt(ply).fen())) === 'over') toast('The game is over in this position');
+  });
   $('#a-clear', root).addEventListener('click', () => { startFen = START_FEN; line = []; ply = 0; headers = null; update(); });
   const onKey = (e) => {
     if (e.target.closest('input,textarea,select,dialog')) return;

@@ -28,8 +28,8 @@ export const LESSONS = [
       'Look for forks when enemy pieces stand on the same colour (knight forks), on the same line, or when the king is exposed: a fork with check is the strongest kind, because the king must respond first.',
     ],
     steps: [
-      { type: 'move', fen: 'r3k3/5ppp/8/3N4/8/8/5PPP/4K3 w - - 0 1', text: 'Find the knight fork that wins the rook.', line: ['d5c7', 'e8d7', 'c7a8'], success: 'Nc7+ hits the king and the rook. The king must move, and the rook falls.' },
-      { type: 'move', fen: '4k3/8/8/7r/8/8/8/3QK3 w - - 0 1', text: 'Now use the queen: give a check that also attacks the rook on h5.', line: ['d1e2', 'e8f7', 'e2h5'], success: 'Qe2+ checks along the e-file and hits h5 along the diagonal. If Black blocks with ...Re5, Qxe5+ still wins the rook.' },
+      { type: 'move', fen: '4k3/5ppp/r7/3N4/8/8/5PPP/4K3 w - - 0 1', text: 'Find the knight fork that wins the rook.', line: ['d5c7', 'e8d7', 'c7a6'], success: 'Nc7+ hits the king and the rook on a6. The king must move, and the rook falls.' },
+      { type: 'move', fen: '4k3/8/8/7r/8/8/2Q5/4K3 w - - 0 1', text: 'Now use the queen: give a check that also attacks the rook on h5.', line: ['c2e2', 'e8f7', 'e2h5'], accept: ['c2g6'], success: 'Qe2+ checks along the e-file and hits h5 along the diagonal (Qg6+ works too). If Black blocks with ...Re5, Qxe5+ still wins the rook.' },
     ],
     practice: { themes: ['fork'], min: 600, max: 1300 },
   },
@@ -124,12 +124,15 @@ export const LESSONS = [
 // Endgame drills: play the position out against full-strength Stockfish.
 // goal: 'mate' (checkmate within `limit` of your moves), 'promote' (promote and stay winning),
 // 'hold' (draw, or survive `limit` moves without the opponent promoting or mating).
+// side: the side you play when Stockfish has to move first (defaults to the side to move).
 export const DRILLS = [
   { id: 'kqk', title: 'Queen and king mate', fen: '8/8/8/4k3/8/8/8/3QK3 w - - 0 1', goal: 'mate', limit: 25, text: 'Use your queen to box in the king (stay a knight\'s jump away), bring your king up, then mate. Avoid stalemate.' },
   { id: 'krk', title: 'Rook and king mate', fen: '8/8/8/4k3/8/8/8/R3K3 w - - 0 1', goal: 'mate', limit: 35, text: 'Cut the king off with the rook, use your king to take the opposition, and shrink the box.' },
   { id: 'krrk', title: 'Two-rook ladder', fen: '4k3/8/8/8/8/8/8/R3K2R w - - 0 1', goal: 'mate', limit: 15, text: 'Alternate rook checks to push the king to the edge. Keep the rooks far from the king.' },
   { id: 'kpk6', title: 'Pawn ending: king on the 6th', fen: '4k3/8/4K3/4P3/8/8/8/8 w - - 0 1', goal: 'promote', limit: 15, text: 'Win by promoting the pawn. Keep the opposition and do not stalemate the king.' },
   { id: 'kpkdef', title: 'Pawn ending: hold the draw', fen: '4k3/8/8/8/4P3/4K3/8/8 b - - 0 1', goal: 'hold', limit: 25, text: 'You defend with Black. Get your king in front of the pawn and keep the opposition.' },
+  { id: 'opposition', title: 'Pawn ending: use the opposition', fen: '8/8/8/3k4/8/3K4/3P4/8 b - - 0 1', side: 'w', goal: 'promote', limit: 20, text: 'You have the opposition and Black must give way. Get your king in front of the pawn, keep the opposition, then push.' },
+  { id: 'square', title: 'Pawn ending: the square', fen: '8/8/8/8/P4k2/8/8/7K b - - 0 1', goal: 'hold', limit: 12, text: 'You defend with Black. Step into the square of the a-pawn and catch it before it promotes.' },
   { id: 'lucena', title: 'Lucena position', fen: '1K1k4/1P6/8/8/8/8/r7/2R5 w - - 0 1', goal: 'promote', limit: 30, text: 'The classic winning technique: drive the enemy king away with a check, then "build a bridge" with your rook to shield your king from checks.' },
   { id: 'philidor', title: 'Philidor defence', fen: '4k3/8/r7/3KP3/8/8/8/7R b - - 0 1', goal: 'hold', limit: 25, text: 'You defend with Black. Keep your rook on the 6th rank until the pawn advances, then check from behind.' },
 ];

@@ -190,7 +190,7 @@ export function hbars(rows) {
   if (!rows.length) return '<div class="empty small">No data yet</div>';
   return `<div class="hbars">${rows.map(r => `
     <div class="hbar-row" title="${esc(r.title || '')}">
-      <div class="hbar-label">${esc(r.label)}</div>
+      <div class="hbar-label">${esc(r.label)}${r.sub ? `<div class="tiny muted">${esc(r.sub)}</div>` : ''}</div>
       <div class="hbar-track"><i style="width:${Math.max(2, (r.value / (r.max || 100)) * 100)}%;background:${r.color || 'var(--series-1)'}"></i></div>
       <div class="hbar-val">${esc(r.text ?? String(r.value))}</div>
     </div>`).join('')}</div>`;

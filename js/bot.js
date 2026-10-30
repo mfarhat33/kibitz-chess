@@ -15,7 +15,7 @@ export const LEVELS = [
   { elo: 1800, name: 'Falcon', blurb: 'Tournament player. Calculates well.' },
   { elo: 2000, name: 'Orion', blurb: 'Expert. Converts advantages cleanly.' },
   { elo: 2200, name: 'Titan', blurb: 'Master level. Very hard to beat.' },
-  { elo: 2500, name: 'Nova', blurb: 'Grandmaster strength (Stockfish limited to 2500).' },
+  { elo: 2500, name: 'Nova', blurb: 'Grandmaster strength. Rarely makes a mistake.' },
   { elo: 0, name: 'Stockfish', blurb: 'Full strength. No limits at all.', max: true },
 ];
 export const DEFAULT_LEVEL = 4; // 1100
@@ -33,6 +33,7 @@ const ANCHORS = [
   [1600, 8, 45, 0.016],
   [1900, 10, 25, 0.006],
   [2200, 13, 12, 0.0015],
+  [2500, 16, 6, 0.0005],
 ];
 
 export function botParams(elo) {
@@ -67,27 +68,29 @@ export function pickCandidate(cands, temp, rand = Math.random) {
   return cands[0].uci;
 }
 
-/** Returns the bot's move in UCI. `timeLeft` (ms) shortens thinking under a clock. */
-export async function chooseBotMove(engine, fen, level, { timeLeft = null, rand = Math.random } = {}) {
+/**
+ * Returns the bot's move in UCI, or null if the engine could not answer (the caller offers a retry).
+ * `timeLeft` (ms) shortens thinking under a clock; `history` ({ startFen, moves }) lets Stockfish
+ * see repetitions.
+ */
+export async function chooseBotMove(engine, fen, level, { timeLeft = null, rand = Math.random, history = null } = {}) {
   const chess = new Chess(fen);
   const legal = chess.moves({ verbose: true });
   if (!legal.length) return null;
   if (legal.length === 1) return moveToUci(legal[0]);
   const cap = timeLeft == null ? null : Math.max(80, Math.min(2500, timeLeft / 25));
+  const hist = history?.moves?.length ? { startFen: history.startFen, moves: history.moves } : {};
   if (level.max) {
-    const r = await engine.analyze(fen, { depth: 22, movetime: cap ? Math.min(cap, 2500) : 2500 });
-    return r?.bestmove || moveToUci(legal[0]);
-  }
-  if (level.elo >= 2400) {
-    const r = await engine.analyze(fen, { elo: level.elo, movetime: cap ? Math.min(cap, 1200) : 1200 });
-    return r?.bestmove || moveToUci(legal[0]);
+    const r = await engine.analyze(fen, { depth: 22, movetime: cap ? Math.min(cap, 2500) : 2500, ...hist });
+    return r?.bestmove || null;
   }
   const p = botParams(level.elo);
   if (rand() < p.blunder) {
     return moveToUci(legal[Math.floor(rand() * legal.length)]);
   }
-  const r = await engine.analyze(fen, { depth: p.depth, multipv: Math.min(6, legal.length), movetime: cap ? Math.min(cap, 1500) : 1500 });
-  if (!r || !r.lines.length) return r?.bestmove || moveToUci(legal[0]);
+  const r = await engine.analyze(fen, { depth: p.depth, multipv: Math.min(6, legal.length), movetime: cap ? Math.min(cap, 1800) : 1800, ...hist });
+  if (!r) return null;
   const cands = r.lines.filter(l => l.pv?.length).map(l => ({ uci: l.pv[0], score: scoreOf(l) }));
+  if (!cands.length) return r.bestmove || null;
   return pickCandidate(cands, p.temp, rand);
 }

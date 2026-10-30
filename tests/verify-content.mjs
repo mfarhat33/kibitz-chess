@@ -51,8 +51,8 @@ const report = await page.evaluate(async () => {
     const c = new Chess(d.fen);
     const r = await eng.analyze(d.fen, { depth: 22 });
     const l = r.lines[0];
-    // score from the side to move; the drill side is the side to move in every drill
-    const s = score(l);
+    // score from the drill side (Stockfish moves first when the drill side is not to move)
+    const s = (d.side && d.side !== c.turn()) ? -score(l) : score(l);
     const ok = d.goal === 'hold' ? Math.abs(s) <= 60 : s >= 500;
     out.push({ where: `drill ${d.id}`, ok, got: l.mate != null ? `mate ${l.mate}` : l.cp, best: r.bestmove, move: d.goal });
     if (c.isGameOver()) out.push({ where: `drill ${d.id}`, ok: false, got: 'game over' });

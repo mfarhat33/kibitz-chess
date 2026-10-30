@@ -9,8 +9,13 @@ import { themeName } from '../themes.js';
 let ctx = null;
 export function unmount() { ctx?.destroy(); ctx = null; }
 
+// themes offered in the rated-puzzle picker
+const PICK_THEMES = ['', 'mateIn1', 'mateIn2', 'mateIn3', 'fork', 'pin', 'skewer', 'discoveredAttack', 'hangingPiece', 'backRankMate',
+  'deflection', 'attraction', 'capturingDefender', 'sacrifice', 'trappedPiece', 'promotion', 'quietMove', 'defensiveMove',
+  'endgame', 'pawnEndgame', 'rookEndgame', 'opening', 'middlegame'];
+
 export function puzzleTabs(active) {
-  return `<nav class="subtabs"><a href="#/puzzles" class="${active === 'rated' ? 'active' : ''}">Rated</a><a href="#/rush" class="${active === 'rush' ? 'active' : ''}">${icons.bolt.replace('<svg', '<svg style="width:15px;height:15px;vertical-align:-2px;margin-right:2px"')}Rush</a><a href="#/puzzles/daily" class="${active === 'daily' ? 'active' : ''}">Daily</a></nav>`;
+  return `<nav class="subtabs"><a href="#/puzzles" class="${active === 'rated' ? 'active' : ''}">Rated</a><a href="#/rush" class="${active === 'rush' ? 'active' : ''}">${icons.bolt.replace('<svg', '<svg style="width:15px;height:15px;vertical-align:-2px;margin-right:2px"')}Rush</a><a href="#/puzzles/daily" class="${active === 'daily' ? 'active' : ''}">Daily</a><a href="#/mistakes" class="${active === 'mistakes' ? 'active' : ''}">My mistakes</a></nav>`;
 }
 
 // ---------- daily puzzle: same puzzle for everyone on a given date, unrated ----------
@@ -119,6 +124,9 @@ export async function mount(root, params = [], isCurrent = () => true) {
             <div><div class="stat-label">Puzzle rating</div><div class="stat-big" id="p-rating"></div></div>
             <div style="text-align:right"><div class="stat-label">This puzzle</div><div style="font-weight:800;font-size:1.2rem" id="p-prating">…</div></div>
           </div>
+          <select id="p-theme" aria-label="Puzzle theme" style="margin-top:10px">
+            ${PICK_THEMES.map(t => `<option value="${t}">${t ? esc(themeName(t)) : 'All themes'}</option>`).join('')}
+          </select>
         </section>
         <div class="status info" id="p-status" role="status"></div>
         <div class="btn-row">
@@ -128,7 +136,7 @@ export async function mount(root, params = [], isCurrent = () => true) {
           <button class="btn" id="p-next" type="button">${icons.next}<span>Skip</span></button>
         </div>
         <section class="card stack hidden" id="p-after"></section>
-        <section class="card"><div class="row between"><h3 style="margin:0">Recent</h3><span class="tiny muted" id="p-streak"></span></div><div id="p-recent" class="rush-track" style="margin-top:10px"></div></section>
+        <section class="card"><div class="row between"><h3 style="margin:0">Recent</h3><span class="tiny muted" id="p-streak"></span></div><div id="p-recent" class="rush-track" style="margin-top:10px"></div><div class="tiny muted" style="margin-top:6px">Tap a red square to retry that puzzle (unrated).</div></section>
       </div>
     </div>`;
   const board = new Board($('#board', root), { coordinates: settings.coords, animate: settings.animation });
@@ -146,7 +154,7 @@ export async function mount(root, params = [], isCurrent = () => true) {
     const d = data();
     $('#p-rating', root).innerHTML = `${Math.round(d.rating)}${delta != null ? ` <span class="small ${delta >= 0 ? 'tq-excellent' : 'tq-blunder'}" style="font-weight:700">${delta >= 0 ? '+' : ''}${Math.round(delta)}</span>` : ''}`;
     const recent = d.attempts.filter(a => a.mode !== 'rush').slice(-24);
-    $('#p-recent', root).innerHTML = recent.map(a => `<i class="${a.ok === 1 ? '' : 'x'}" title="${a.ok === 1 ? 'Solved' : a.ok ? 'Solved with hint' : 'Failed'} · ${Number(a.pr) || ''}"${a.ok === 0.5 ? ' style="background:var(--q-inaccuracy)"' : ''}></i>`).join('') || '<span class="tiny muted">Your results will show here.</span>';
+    $('#p-recent', root).innerHTML = recent.map(a => `<i class="${a.ok === 1 ? '' : 'x'}" title="${a.ok === 1 ? 'Solved' : a.ok ? 'Solved with hint' : 'Failed, tap to retry'} · ${Number(a.pr) || ''}"${a.ok === 1 ? '' : ` data-retry="${esc(a.id)}" data-pr="${Number(a.pr) || 0}" role="button" tabindex="0" style="cursor:pointer${a.ok === 0.5 ? ';background:var(--q-inaccuracy)' : ''}"`}></i>`).join('') || '<span class="tiny muted">Your results will show here.</span>';
     let streak = 0;
     for (let i = recent.length - 1; i >= 0 && recent[i].ok === 1; i--) streak++;
     $('#p-streak', root).textContent = streak >= 2 ? `${streak} in a row` : '';
@@ -172,11 +180,11 @@ export async function mount(root, params = [], isCurrent = () => true) {
       <div class="row between"><h3 style="margin:0">${solved ? 'Solved' : 'Puzzle over'}</h3><a class="tiny" href="https://lichess.org/training/${encodeURIComponent(puzzle.id)}" target="_blank" rel="noopener">Puzzle ${esc(puzzle.id)} on Lichess</a></div>
       <div class="theme-tags">${puzzle.themes.map(t => `<span>${esc(themeName(t))}</span>`).join('')}</div>
       <button class="btn primary block" id="p-next2" type="button">${icons.next} Next puzzle</button>`;
-    $('#p-next2', el).addEventListener('click', next);
+    $('#p-next2', el).addEventListener('click', () => next());
     $('#p-next', root).querySelector('span').textContent = 'Next';
   }
 
-  async function next() {
+  async function next(retry = null) {
     if (loading) return;
     loading = true;
     player?.destroy();
@@ -187,8 +195,15 @@ export async function mount(root, params = [], isCurrent = () => true) {
     const d = data();
     const seen = new Set(d.attempts.map(a => a.id));
     const target = d.rating + (Math.random() * 200 - 80);
+    const theme = $('#p-theme', root).value;
     try {
-      puzzle = await pickPuzzle(target, { exclude: seen });
+      if (retry) {
+        const list = await loadBucket(Math.max(400, Math.min(3000, Math.floor(retry.pr / 100) * 100)));
+        puzzle = list.find(p => p.id === retry.id);
+        if (!puzzle) throw new Error('missing');
+      } else {
+        puzzle = await pickPuzzle(target, { exclude: seen, spread: theme ? 150 : 75, filter: theme ? (p) => p.themes.includes(theme) : null });
+      }
     } catch (err) {
       loading = false;
       status('Could not load a puzzle. Check your connection.', 'bad');
@@ -197,8 +212,9 @@ export async function mount(root, params = [], isCurrent = () => true) {
     loading = false;
     if (!alive) return;
     prefetch(d.rating + 100);
-    rated = false; usedHint = false; moved = false;
-    $('#p-prating', root).textContent = '?';
+    // a retry is practice: it never changes the rating
+    rated = !!retry; usedHint = false; moved = false;
+    $('#p-prating', root).textContent = retry ? `${puzzle.rating} · retry` : '?';
     player = new PuzzlePlayer(board, puzzle, {
       onStep: (p) => {
         if (p.chess.turn() === p.solver) status(moved ? 'Correct! Keep going…' : `Find the best move for <b>${p.solverName}</b>`, moved ? 'ok' : 'info');
@@ -220,8 +236,21 @@ export async function mount(root, params = [], isCurrent = () => true) {
     const origMove = board.opts.onMove;
     board.opts.onMove = (f, t, pr) => { moved = true; origMove(f, t, pr); };
     player.start();
-    status('Get ready…');
+    status(retry ? 'Retry (unrated). Get ready…' : 'Get ready…');
   }
+
+  $('#p-theme', root).value = store.get('puzzles.theme', '');
+  $('#p-theme', root).addEventListener('change', (e) => {
+    store.set('puzzles.theme', e.target.value);
+    if (player && !player.done && moved && !rated) record(0);
+    next();
+  });
+  $('#p-recent', root).addEventListener('click', (e) => {
+    const dot = e.target.closest('[data-retry]');
+    if (!dot || loading) return;
+    if (player && !player.done && moved && !rated) record(0);
+    next({ id: dot.dataset.retry, pr: +dot.dataset.pr });
+  });
 
   $('#p-hint', root).addEventListener('click', () => {
     if (loading || !player || player.done) return;

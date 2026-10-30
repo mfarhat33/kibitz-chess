@@ -307,7 +307,7 @@ test('explanations use the right voice and only say undefended when true', () =>
     best: [null, null, null, 'b8c6', 'f3h4'], pv: [[], [], [], ['b8c6'], ['f3h4', 'g8f6', 'd2d3']], acc: [],
   };
   const ex = explainMove(3, { fens, moves, sans: uciLineToSan(fens[0], moves), review, viewer: 'w', names: { w: 'You', b: 'Sprout' } });
-  assert.match(ex.lines[0], /^Sprout's queen on h4 can simply be taken/);
+  assert.match(ex.lines[0], /^Sprout's queen on h4 is left hanging: Nxh4 wins it/);
   assert.doesNotMatch(ex.lines.join(' '), /\byour queen\b/i);
   // defended knight attacked by a pawn: not "undefended"
   const fen = 'rnbqkbnr/pp1ppppp/8/8/1p6/2N4P/PPPPPPP1/R1BQKBNR w KQkq - 0 1';
@@ -315,7 +315,18 @@ test('explanations use the right voice and only say undefended when true', () =>
     review: { labels: ['mistake'], evals: [{ cp: 0 }, { cp: -250 }], best: ['c3e4', 'b4c3'], pv: [['c3e4'], ['b4c3', 'b2c3', 'g8f6']], acc: [] } };
   const ex2 = explainMove(0, g2);
   assert.doesNotMatch(ex2.lines.join(' '), /undefended/);
-  assert.match(ex2.lines[0], /knight on c3 is attacked by a pawn/);
+  // the b4 pawn already attacked c3 before h4 was played
+  assert.match(ex2.lines[0], /knight on c3 was already under attack, and h4 does nothing about it/);
+  assert.match(ex2.lines[0], /you lose a knight for a pawn/);
+  // a rook that was already forked is not "left undefended" by an unrelated move
+  const f3 = '4k3/8/8/8/8/1n6/7P/R5K1 w - - 0 1';
+  const g3 = { fens: [f3, fenAfter(f3, 'h2h3')], moves: ['h2h3'], sans: ['h3'], viewer: 'w', names: { w: 'You', b: 'Bot' },
+    review: { labels: ['blunder'], evals: [{ cp: 250 }, { cp: -230 }], best: ['a1a3', 'b3a1'], pv: [['a1a3', 'b3d4'], ['b3a1', 'g1f2']], acc: [] } };
+  const ex3 = explainMove(0, g3);
+  assert.match(ex3.lines[0], /rook on a1 was already under attack, and h3 does nothing about it: Nxa1 wins it/);
+  // no material claim when the evaluation does not support one
+  const g4 = { ...g3, review: { ...g3.review, labels: ['inaccuracy'], evals: [{ cp: 250 }, { cp: 120 }] } };
+  assert.doesNotMatch(explainMove(0, g4).lines.join(' '), /wins it|lose/);
 });
 
 function fenAfter(fen, u) { const c = new Chess(fen); c.move({ from: u.slice(0, 2), to: u.slice(2, 4) }); return c.fen(); }

@@ -16,11 +16,12 @@ const routes = {
   learn: () => import('./views/learn.js'),
   quiz: () => import('./views/quiz.js'),
   coords: () => import('./views/coords.js'),
+  mistakes: () => import('./views/mistakes.js'),
 };
 const TAB_OF = {
   play: 'play', games: 'play', review: 'play', puzzles: 'puzzles', rush: 'puzzles',
   openings: 'openings', trainer: 'openings', insights: 'insights', settings: 'settings',
-  analysis: 'play', learn: 'learn', quiz: 'learn', coords: 'learn',
+  analysis: 'play', learn: 'learn', quiz: 'learn', coords: 'learn', mistakes: 'puzzles',
 };
 
 const media = matchMedia('(prefers-color-scheme: dark)');

@@ -2,14 +2,14 @@
 import { Chess, playUci, pieceCount, VALUES } from './chessutil.js';
 import { toWhite } from './engine.js';
 
-export const LABELS = ['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'inaccuracy', 'miss', 'mistake', 'blunder'];
+export const LABELS = ['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'forced', 'inaccuracy', 'miss', 'mistake', 'blunder'];
 export const BAD_LABELS = ['inaccuracy', 'miss', 'mistake', 'blunder'];
 export const LABEL_TEXT = {
-  brilliant: 'Brilliant', great: 'Great move', best: 'Best', excellent: 'Excellent', good: 'Good', book: 'Book',
+  brilliant: 'Brilliant', great: 'Great move', best: 'Best', excellent: 'Excellent', good: 'Good', book: 'Book', forced: 'Forced',
   inaccuracy: 'Inaccuracy', miss: 'Miss', mistake: 'Mistake', blunder: 'Blunder',
 };
 export const LABEL_GLYPH = {
-  brilliant: '!!', great: '!', best: '★', excellent: '✓', good: '○', book: 'B',
+  brilliant: '!!', great: '!', best: '★', excellent: '✓', good: '○', book: 'B', forced: '→',
   inaccuracy: '?!', miss: '✗', mistake: '?', blunder: '??',
 };
 
@@ -107,6 +107,7 @@ export function positions(moves, startFen) {
  */
 export async function analyzePositions(engine, fens, { depth = DEPTHS.standard, moves = null, onProgress, isCancelled } = {}) {
   const evals = [], best = [], pv = [], second = [];
+  engine.newGame?.(); // a clean hash makes repeated reviews of the same game agree
   // replay the game on one board so repetitions and the 50-move rule are known
   const game = new Chess(fens[0]);
   for (let i = 0; i < fens.length; i++) {
@@ -136,35 +137,83 @@ export async function analyzePositions(engine, fens, { depth = DEPTHS.standard, 
     }
     onProgress?.(i + 1, fens.length);
   }
+  // consistency pass: if the engine's own best move appears to lose a lot, one of the two searches
+  // missed something (usually a deep mate). Search both positions again, deeper.
+  if (moves) {
+    const pov = (w, c) => (c === 'w' ? w : 100 - w);
+    let rechecks = 0;
+    for (let i = 0; i < moves.length && rechecks < 10; i++) {
+      if (best[i] !== moves[i] || evals[i + 1]?.mate === 0) continue;
+      const c = fens[i].split(' ')[1];
+      if (pov(winPct(evals[i]), c) - pov(winPct(evals[i + 1]), c) < 5) continue;
+      rechecks++;
+      for (const k of [i, i + 1]) {
+        if (isCancelled?.()) return null;
+        if (!best[k]) continue;
+        const nLegal = new Chess(fens[k]).moves().length;
+        const r = await engine.analyze(fens[k], { depth: depth + 6, multipv: Math.min(2, nLegal), movetime: 10000, startFen: fens[0], moves: moves.slice(0, k) });
+        if (!r?.lines[0]) continue;
+        const turn = fens[k].split(' ')[1];
+        evals[k] = toWhite(r.lines[0], turn);
+        best[k] = r.lines[0].pv[0] || r.bestmove;
+        pv[k] = r.lines[0].pv.slice(0, 10);
+        const l2 = r.lines[1];
+        second[k] = l2 ? { ...toWhite(l2, turn), move: l2.pv[0] } : null;
+      }
+    }
+  }
   return { depth, evals, best, pv, second };
 }
 
-/** True if the move leaves a minor or major piece where it can be taken at a loss: a sacrifice. */
+/** Values of the pieces that can legally capture on `sq` for the side to move, cheapest first. */
+function legalCapturers(c, sq) {
+  return c.moves({ verbose: true }).filter(m => m.to === sq && m.captured).map(m => (m.piece === 'k' ? 100 : VALUES[m.piece])).sort((a, b) => a - b);
+}
+
+/** Can the side to move win the piece on `sq` (owned by `owner`)? Uses legal captures only. */
+function enPrise(c, sq, owner) {
+  const p = c.get(sq);
+  if (!p || p.type === 'k') return false;
+  const caps = legalCapturers(c, sq);
+  if (!caps.length) return false;
+  if (!c.attackers(sq, owner).length) return true;
+  return caps[0] < VALUES[p.type];
+}
+
+/**
+ * True if the move gives up material on purpose: the moved piece (knight or bigger) can be taken
+ * at a loss, or the move leaves another of its pieces to be taken. Only legal captures count.
+ */
 export function isSacrifice(fen, uci) {
   const c = new Chess(fen);
   const mover = c.turn();
   const m = playUci(c, uci);
-  if (!m) return false;
+  if (!m || c.isCheckmate()) return false;
   const piece = m.promotion || m.piece;
   const val = VALUES[piece];
-  if (piece === 'k' || val < 3) return false;
-  const gained = m.captured ? VALUES[m.captured] : 0;
-  if (gained >= val) return false;
-  const opp = c.turn();
-  const attackers = c.attackers(m.to, opp);
-  if (!attackers.length) return false;
-  const defenders = c.attackers(m.to, mover);
-  if (!defenders.length) return true;
-  const cheapest = Math.min(...attackers.map(sq => (c.get(sq).type === 'k' ? 100 : VALUES[c.get(sq).type])));
-  return cheapest + gained < val;
+  if (piece !== 'k' && val >= 3) {
+    const gained = m.captured ? VALUES[m.captured] : 0;
+    const caps = legalCapturers(c, m.to);
+    if (caps.length && gained < val) {
+      const defended = c.attackers(m.to, mover).length > 0;
+      if (!defended || caps[0] + gained < val) return true;
+    }
+  }
+  for (const row of c.board()) for (const p of row) {
+    if (!p || p.color !== mover || p.square === m.to || p.type === 'k' || VALUES[p.type] < 3) continue;
+    if (enPrise(c, p.square, mover)) return true;
+  }
+  return false;
 }
 
-function isRecapture(moves, fens, i) {
-  if (i === 0) return false;
-  const prev = new Chess(fens[i - 1]);
-  const pm = playUci(prev, moves[i - 1]);
-  if (!pm?.captured) return false;
-  return moves[i].slice(2, 4) === pm.to;
+const SEVERITY = { inaccuracy: 1, miss: 2, mistake: 2, blunder: 3 };
+const worse = (a, b) => ((SEVERITY[b] || 0) > (SEVERITY[a] || 0) ? b : a);
+
+function moverScore(e, color) {
+  const s = color === 'w' ? 1 : -1;
+  if (!e) return { cp: 0, mate: null };
+  if (e.mate === 0) return { cp: null, mate: 0, lost: e.win !== color };
+  return { cp: e.cp == null ? null : e.cp * s, mate: e.mate == null ? null : e.mate * s };
 }
 
 /** Turn raw evaluations into labels, accuracies and per-colour summaries. */
@@ -185,19 +234,45 @@ export function classify(raw, moves, fens, isBookPos = () => false) {
     phases.push(phaseOf(fens[i], i));
     inBook = inBook && i < 30 && isBookPos(fens[i + 1]);
     if (inBook && l < 10) { labels.push('book'); continue; }
-    let label = labelFor(l, raw.best[i] === moves[i]);
-    // great: the only move that keeps the position; every alternative is much worse
-    if (label === 'best' && second[i] && before > 15 && before < 90 && !isRecapture(moves, fens, i)) {
-      if (before - pov(winPct(second[i]), color) >= 15) label = 'great';
+    const pos = new Chess(fens[i]);
+    const inCheck = pos.inCheck();
+    const nLegal = pos.moves().length;
+    const mv = playUci(pos, moves[i]);
+    if (nLegal === 1) { labels.push('forced'); continue; }
+    const givesMate = pos.isCheckmate();
+    // a move that scores clearly better than the engine's own first choice was at least as good
+    let label = givesMate ? 'best' : labelFor(l, raw.best[i] === moves[i] || after - before >= 1);
+
+    // mates, graded like Lichess: allowing a forced mate (or throwing one away) is a blunder
+    // unless the position was already lost (or still overwhelmingly won)
+    const b = moverScore(raw.evals[i], color);
+    const a = moverScore(raw.evals[i + 1], color);
+    const matedAfter = (a.mate != null && a.mate < 0) || (a.mate === 0 && a.lost);
+    const matedBefore = b.mate != null && b.mate < 0;
+    if (matedAfter && !matedBefore) {
+      const prevCp = b.mate != null ? 10000 : b.cp ?? 0;
+      label = worse(label, prevCp < -999 ? 'inaccuracy' : prevCp < -700 ? 'mistake' : 'blunder');
+    }
+    if (b.mate != null && b.mate > 0 && !givesMate && !(a.mate != null && a.mate > 0)) {
+      const cpAfter = matedAfter ? -10000 : a.cp ?? 0;
+      label = worse(label, cpAfter > 999 ? 'inaccuracy' : cpAfter > 700 ? 'mistake' : 'blunder');
+    }
+
+    // great: the only good move. Not for obvious captures or a king escaping check with few options.
+    if (label === 'best' && !givesMate && second[i] && before > 15 && before < 90 && !(inCheck && nLegal <= 3)) {
+      const prevTo = i > 0 ? moves[i - 1].slice(2, 4) : null;
+      const takesLastMoved = !!mv.captured && mv.to === prevTo;
+      const winningCapture = !!mv.captured && (VALUES[mv.captured] >= VALUES[mv.piece] || !new Chess(fens[i]).attackers(mv.to, color === 'w' ? 'b' : 'w').length);
+      if (!takesLastMoved && !winningCapture && before - pov(winPct(second[i]), color) >= 15) label = 'great';
     }
     // brilliant: a sound sacrifice that is also (one of) the best moves, in a position that is not already won
-    if (['best', 'great', 'excellent'].includes(label) && l < 2 && after >= 45 && before < 95 && isSacrifice(fens[i], moves[i])) {
+    if (['best', 'great', 'excellent'].includes(label) && !givesMate && l < 2 && after >= 45 && before < 95 && isSacrifice(fens[i], moves[i])) {
       label = 'brilliant';
     }
-    // miss: the opponent just erred and this move hands the advantage back
+    // miss: the opponent just erred and this move hands roughly that advantage straight back
     if (i > 0 && BAD_LABELS.includes(label) && loss[i - 1] >= 10 && l >= 10) {
       const beforeTheirError = pov(wins[i - 1], color);
-      if (after <= beforeTheirError + 5) label = 'miss';
+      if (after <= beforeTheirError + 5 && after >= beforeTheirError - 5) label = 'miss';
     }
     labels.push(label);
   }

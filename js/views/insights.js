@@ -1,6 +1,7 @@
 // Insights: results, accuracy and blunders over time; splits by colour, opening and phase; puzzle trends.
 import * as store from '../store.js';
 import { positions, phaseStats } from '../analysis.js';
+import { START_FEN } from '../chessutil.js';
 import { family } from '../openings-data.js';
 import { lineChart, stackedBars, legend, hbars } from '../charts.js';
 import { themeName, isTactical } from '../themes.js';
@@ -52,7 +53,8 @@ export function computeInsights(games, puzzles, rush) {
 
   const phases = { opening: { moves: 0, accSum: 0, blunders: 0, mistakes: 0, games: 0 }, middlegame: { moves: 0, accSum: 0, blunders: 0, mistakes: 0, games: 0 }, endgame: { moves: 0, accSum: 0, blunders: 0, mistakes: 0, games: 0 } };
   for (const g of reviewed) {
-    const ps = phaseStats(g.review, positions(g.moves), g.userColor);
+    let ps;
+    try { ps = phaseStats(g.review, positions(g.moves, g.startFen || START_FEN), g.userColor); } catch { continue; }
     for (const k of Object.keys(phases)) {
       if (!ps[k].moves) continue;
       phases[k].moves += ps[k].moves;
@@ -158,7 +160,8 @@ export function mount(root) {
 
   const ph = d.phases;
   root.querySelector('#c-phase').innerHTML = d.reviewedCount ? hbars(['opening', 'middlegame', 'endgame'].filter(k => ph[k].moves).map(k => ({
-    label: `${k[0].toUpperCase() + k.slice(1)} · ${(ph[k].blunders / ph[k].games).toFixed(1)} blunders`,
+    label: `${k[0].toUpperCase() + k.slice(1)}`,
+    sub: `${(ph[k].blunders / ph[k].games).toFixed(1)} blunders per game`,
     value: ph[k].accSum / ph[k].moves, max: 100, text: `${Math.round(ph[k].accSum / ph[k].moves)}%`,
     color: 'var(--series-1)', title: `${ph[k].moves} moves in ${ph[k].games} games`,
   }))) : '<div class="empty small">Review games to see phase accuracy.</div>';
