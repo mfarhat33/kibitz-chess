@@ -20,6 +20,7 @@
     var dark = s.theme === 'dark' || (s.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     document.documentElement.dataset.board = s.board || 'slate';
+    document.documentElement.dataset.pieces = s.pieces || 'cburnett';
   })();
 </script>
 </head>
@@ -29,13 +30,14 @@
   <nav class="nav" id="nav" aria-label="Main">
     <a href="#/play" data-tab="play"><span data-icon="play"></span><span>Play</span></a>
     <a href="#/puzzles" data-tab="puzzles"><span data-icon="puzzle"></span><span>Puzzles</span></a>
+    <a href="#/learn" data-tab="learn"><span data-icon="learn"></span><span>Learn</span></a>
     <a href="#/openings" data-tab="openings"><span data-icon="book"></span><span>Openings</span></a>
     <a href="#/insights" data-tab="insights"><span data-icon="chart"></span><span>Insights</span></a>
-    <a href="#/settings" data-tab="settings"><span data-icon="settings"></span><span>Settings</span></a>
   </nav>
   <span class="spacer"></span>
   <div class="top-actions">
     <button class="icon-btn" id="theme-toggle" type="button" aria-label="Toggle dark mode"></button>
+    <a class="icon-btn" id="settings-link" href="#/settings" aria-label="Settings"><span data-icon="settings"></span></a>
   </div>
 </header>
 <main id="view" tabindex="-1"></main>

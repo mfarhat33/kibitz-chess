@@ -1,12 +1,13 @@
 // History of games played in the app, newest first.
 import * as store from '../store.js';
+import { playTabs } from './tabs.js';
 import { esc, timeAgo, icons } from '../ui.js';
 
 export function mount(root) {
   const games = store.allGames();
   const cur = store.get('play.current');
   root.innerHTML = `
-    <nav class="subtabs"><a href="#/play">New game</a><a href="#/games" class="active">My games</a></nav>
+    ${playTabs('games')}
     <div class="page stack">
       ${cur && !cur.over ? `<a class="card row" href="#/play" style="text-decoration:none;color:inherit">${icons.start}<div class="grow"><b>Game in progress</b><div class="small muted">${cur.moves.length} moves played. Tap to continue.</div></div></a>` : ''}
       <section class="card">
@@ -19,9 +20,10 @@ export function mount(root) {
 }
 
 function row(g) {
-  const acc = g.review?.accuracy?.[g.userColor];
+  const accRaw = g.review?.accuracy?.[g.userColor];
+  const acc = typeof accRaw === 'number' ? accRaw : null;
   const res = { win: 'Win', loss: 'Loss', draw: 'Draw' }[g.userResult];
-  const blunders = g.review ? g.review.counts[g.userColor].blunder : null;
+  const blunders = g.review ? Number(g.review.counts?.[g.userColor]?.blunder) || 0 : null;
   return `<a class="list-item" href="#/review/${encodeURIComponent(g.id)}">
     <span class="color-dot ${g.userColor}" title="You played ${g.userColor === 'w' ? 'White' : 'Black'}"></span>
     <div class="grow">

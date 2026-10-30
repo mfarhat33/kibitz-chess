@@ -39,6 +39,7 @@ export const icons = {
   clock: ic('<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'),
   start: ic('<path d="M8 5v14l11-7z"/>'),
   list: ic('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>'),
+  learn: ic('<path d="M3 9l9-5 9 5-9 5z"/><path d="M7 11.2V16c0 1.2 2.2 2.5 5 2.5s5-1.3 5-2.5v-4.8"/><path d="M21 9v5"/>'),
   bulbOff: ic('<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5"/>'),
 };
 
@@ -69,7 +70,12 @@ export function dialog({ title, body = '', buttons = [{ label: 'OK', value: true
       actions.appendChild(btn);
     }
     d.addEventListener('close', () => { d.remove(); resolve(value); });
-    d.addEventListener('click', (e) => { if (e.target === d) d.close(); });
+    // only a tap outside the dialog box (on the backdrop) dismisses it, not one in its padding
+    d.addEventListener('click', (e) => {
+      if (e.target !== d) return;
+      const r = d.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
+    });
     document.body.appendChild(d);
     d.showModal();
   });

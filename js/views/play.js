@@ -1,9 +1,10 @@
 // Play vs bots: setup, game loop, clocks, hints, takebacks. Finished games are saved for review.
-import { Board } from '../board.js';
+import { Board, pieceUrl } from '../board.js';
 import { Chess, dests, checkSquare, playUci, gameOverInfo, canMate, material, colorName, uciToMove } from '../chessutil.js';
 import { getEngine } from '../engine.js';
 import { LEVELS, DEFAULT_LEVEL, chooseBotMove, levelLabel } from '../bot.js';
 import * as store from '../store.js';
+import { playTabs } from './tabs.js';
 import { icons, esc, toast, confirm, fmtClock, sound, moveSound, $ } from '../ui.js';
 import { loadOpenings, openingOf } from '../openings-data.js';
 
@@ -40,7 +41,7 @@ function prefs() {
 function setupView(root) {
   const p = prefs();
   root.innerHTML = `
-    <nav class="subtabs"><a href="#/play" class="active">New game</a><a href="#/games">My games</a></nav>
+    ${playTabs('new')}
     <div class="stage">
       <div class="board-col desktop-only"><div class="board-shell"><div id="preview"></div></div></div>
       <div class="side-col">
@@ -106,6 +107,7 @@ function startNew(root, { level, color, tc }) {
     level,
     tc: t.base ? t.id : null,
     clocks: t.base ? { w: t.base, b: t.base } : null,
+    clockLog: t.base ? [{ w: t.base, b: t.base }] : null,
     moves: [],
     takebacks: 0,
     hints: 0,
@@ -194,7 +196,7 @@ function gameView(root, state) {
     let caps = '';
     for (const t of ['q', 'r', 'b', 'n', 'p']) {
       const n = START_COUNT[t] - mat.count[opp][t];
-      for (let i = 0; i < n; i++) caps += `<i style="background-image:url(img/pieces/${opp}${t.toUpperCase()}.svg)"></i>`;
+      for (let i = 0; i < n; i++) caps += `<i style="background-image:url(${pieceUrl(opp + t.toUpperCase())})"></i>`;
     }
     const diff = mat[color] - mat[opp];
     const t = live(color);
@@ -297,6 +299,11 @@ function gameView(root, state) {
     if (!m) return false;
     charge(color);
     state.moves.push(uci);
+    if (state.clocks) {
+      state.clockLog = state.clockLog || [];
+      state.clockLog[state.moves.length] = { ...state.clocks };
+      state.clockLog.length = state.moves.length + 1;
+    }
     if (state.moves.length === 2) turnStart = performance.now();
     lastMove = [m.from, m.to];
     hintArrow = null;
@@ -392,8 +399,9 @@ function gameView(root, state) {
     btn.disabled = true;
     hintEngine.cancel();
     const r = await hintEngine.analyze(fen, { depth: 16, movetime: 1500 });
-    btn.disabled = false;
-    if (!alive || !r?.bestmove || chess.fen() !== fen) return;
+    if (!alive) return;
+    setStatus();
+    if (!r?.bestmove || chess.fen() !== fen) return;
     state.hints++;
     const m = uciToMove(r.bestmove);
     hintArrow = { from: m.from, to: m.to, color: 'rgba(32,150,210,.85)' };
@@ -416,7 +424,14 @@ function gameView(root, state) {
     // never undo the bot's opening move when you play Black
     if (user === 'b' && state.moves.length - n < 1) n = state.moves.length - 1;
     if (n <= 0) { toast('Nothing to take back'); render(false); return; }
+    // clocks go back to where they stood, except that your own thinking time is never refunded
+    if (state.clocks) {
+      const liveUser = live(user);
+      const snap = state.clockLog?.[state.moves.length - n] || state.clocks;
+      state.clocks = { [bot]: snap[bot], [user]: Math.min(liveUser, snap[user]) };
+    }
     state.moves.splice(-n, n);
+    if (state.clockLog) state.clockLog.length = state.moves.length + 1;
     state.takebacks++;
     chess.reset();
     for (const u of state.moves) playUci(chess, u);

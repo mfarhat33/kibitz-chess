@@ -47,12 +47,14 @@ export async function mount(root) {
   let drill = null;
   let session = [];
   let alive = true;
+  let drillGen = 0; // bumped whenever a drill starts or is abandoned; stale timers check it
 
   const nav = $('#t-nav', root);
   const setNav = (on) => { nav.style.visibility = on ? 'visible' : 'hidden'; };
   setNav(false);
 
   function overview() {
+    drillGen++;
     drill = null;
     setNav(false);
     board.setPosition(START, { lastMove: null });
@@ -129,7 +131,7 @@ export async function mount(root) {
     return `<div class="list-item">
       <span class="color-dot ${c.color}" title="You play ${c.color === 'w' ? 'White' : 'Black'}"></span>
       <div class="grow"><div class="t">${esc(c.name)}</div><div class="s">${esc(formatLine(START, sans))}</div>
-        <div class="tiny muted">${st} · ${dueText(c)}${c.reps ? ` · every ${c.interval} day${c.interval === 1 ? '' : 's'}` : ''}</div></div>
+        <div class="tiny muted">${st} · ${dueText(c)}${c.reps ? ` · every ${Number(c.interval) || 0} day${c.interval === 1 ? '' : 's'}` : ''}</div></div>
       <div class="row nowrap" style="gap:6px">
         <button class="btn small" type="button" data-drill="${esc(c.id)}">Drill</button>
         <button class="btn small ghost" type="button" data-del="${esc(c.id)}" aria-label="Remove line">${icons.trash}</button>
@@ -145,6 +147,8 @@ export async function mount(root) {
   }
 
   function startDrill(card) {
+    const gen = ++drillGen;
+    const live = () => alive && gen === drillGen;
     setNav(true);
     const chess = new Chess();
     const user = card.color;
@@ -169,7 +173,7 @@ export async function mount(root) {
         <div class="moves-inline" id="t-moves" style="padding:0;flex-wrap:wrap"></div>
       </section>`;
 
-    const status = (msg, cls = 'info') => { const s = $('#t-status', root); s.className = 'status ' + cls; s.textContent = msg; };
+    const status = (msg, cls = 'info') => { const s = $('#t-status', root); if (!s || !live()) return; s.className = 'status ' + cls; s.textContent = msg; };
     const myTurn = () => (ply % 2 === 0) === (user === 'w');
 
     function render(animate = true) {
@@ -185,13 +189,15 @@ export async function mount(root) {
       board.setArrows(arrows);
       let html = '';
       chess.history().forEach((s, i) => { if (i % 2 === 0) html += `<span class="n">${i / 2 + 1}.</span>`; html += `<span>${esc(s)}</span>`; });
-      $('#t-moves', root).innerHTML = html;
+      const mv = $('#t-moves', root);
+      if (!mv || !live()) return;
+      mv.innerHTML = html;
       const doneMine = card.moves.slice(0, ply).filter((_, i) => (i % 2 === 0) === (user === 'w')).length;
       $('#t-prog', root).style.width = (doneMine / Math.max(1, userMoves) * 100) + '%';
     }
 
     async function step() {
-      if (!alive || done) return;
+      if (!live() || done) return;
       if (ply >= card.moves.length) { finish(); return; }
       if (myTurn()) {
         status(learning ? 'Play the move shown by the arrow.' : wrongHere >= 2 ? 'The arrow shows the line move.' : 'Your move: play the line.');
@@ -202,7 +208,7 @@ export async function mount(root) {
       render();
       const t = ++token;
       await new Promise(r => setTimeout(r, 420));
-      if (!alive || t !== token || done) return;
+      if (!live() || t !== token || done) return;
       const m = playUci(chess, card.moves[ply]);
       ply++;
       moveSound(m, chess);
@@ -211,7 +217,7 @@ export async function mount(root) {
 
     drill = {
       userMove(from, to, promo) {
-        if (done || !myTurn()) return;
+        if (!live() || done || !myTurn()) return;
         const expected = card.moves[ply];
         const legal = chess.moves({ verbose: true }).find(x => x.from === from && x.to === to && (!x.promotion || x.promotion === (promo || 'q')));
         if (!legal) return;
@@ -247,6 +253,7 @@ export async function mount(root) {
     };
 
     function finish() {
+      if (!live()) return;
       done = true;
       const q = qualityFor(mistakes, usedShow, learning);
       const updated = reviewCard(card, q);

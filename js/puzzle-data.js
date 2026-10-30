@@ -29,9 +29,9 @@ export function loadBucket(b) {
 
 /**
  * Picks an unseen puzzle close to `target`. Looks in the target bucket first, then neighbours.
- * opts: { exclude: Set of ids, maxMoves, spread (rating window), rand }
+ * opts: { exclude: Set of ids, maxMoves, spread (rating window), filter(puzzle) => bool, rand }
  */
-export async function pickPuzzle(target, { exclude = new Set(), maxMoves = 99, spread = 75, rand = Math.random } = {}) {
+export async function pickPuzzle(target, { exclude = new Set(), maxMoves = 99, spread = 75, filter = null, rand = Math.random } = {}) {
   const index = await loadIndex();
   const have = Object.keys(index.buckets).map(Number);
   const order = [...have].sort((a, b) => Math.abs(a + 50 - target) - Math.abs(b + 50 - target));
@@ -39,13 +39,14 @@ export async function pickPuzzle(target, { exclude = new Set(), maxMoves = 99, s
     const window = spread * (1 + widen);
     for (const b of order.slice(0, 2 + widen * 2)) {
       const list = await loadBucket(b);
-      const cands = list.filter(p => !exclude.has(p.id) && p.moves.length <= maxMoves && Math.abs(p.rating - target) <= window);
+      const cands = list.filter(p => !exclude.has(p.id) && p.moves.length <= maxMoves && Math.abs(p.rating - target) <= window && (!filter || filter(p)));
       if (cands.length) return cands[Math.floor(rand() * cands.length)];
     }
   }
   // everything nearby has been seen: allow repeats rather than fail
-  const list = await loadBucket(order[0]);
-  return list[Math.floor(rand() * list.length)];
+  const list = (await loadBucket(order[0])).filter(p => !filter || filter(p));
+  const pool = list.length ? list : await loadBucket(order[0]);
+  return pool[Math.floor(rand() * pool.length)];
 }
 
 export function prefetch(rating) {

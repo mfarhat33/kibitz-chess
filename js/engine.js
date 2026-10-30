@@ -16,9 +16,14 @@ export class Engine {
     return new Promise((resolve, reject) => {
       try {
         this.worker = new Worker(ENGINE_URL);
-      } catch (err) { reject(err); return; }
+      } catch (err) { this.fail(); reject(err); return; }
       this.worker.onmessage = (e) => this.onLine(String(e.data));
-      this.worker.onerror = (e) => { console.error('engine error', e.message); reject(e); };
+      this.worker.onerror = (e) => {
+        console.error('engine error', e.message);
+        this.fail();
+        reject(e);
+      };
+      this.listeners = [];
       const wait = (token, then) => this.listeners.push({ token, then });
       wait('uciok', () => {
         this.send('setoption name Hash value 16');
@@ -27,6 +32,30 @@ export class Engine {
       });
       this.send('uci');
     });
+  }
+
+  /** The worker crashed or never started: settle every waiting search with null so no screen hangs. */
+  fail() {
+    this.failed = true;
+    this.isReady = false;
+    clearTimeout(this.watchdog);
+    const pending = [this.job, ...this.queue].filter(Boolean);
+    this.job = null;
+    this.queue = [];
+    for (const j of pending) j.resolve?.(null);
+  }
+
+  /** Replace a hung worker with a fresh one; the current search resolves null. */
+  restart() {
+    console.warn('engine restarted after a stuck search');
+    const job = this.job;
+    this.job = null;
+    clearTimeout(this.watchdog);
+    try { this.worker.terminate(); } catch { /* already gone */ }
+    this.isReady = false;
+    this.opts = {};
+    job?.resolve?.(null);
+    this.ready = this.start().catch(() => {});
   }
 
   send(cmd) { this.worker.postMessage(cmd); }
@@ -45,10 +74,12 @@ export class Engine {
 
   /**
    * Search a position. Scores in the result are from the side to move's point of view.
-   * opts: { depth, movetime, multipv, elo (UCI_Elo limit), onInfo(lines) }
+   * opts: { depth, movetime, multipv, elo (UCI_Elo limit), onInfo(lines),
+   *         startFen + moves: send the game history so Stockfish can see repetitions }
    * Resolves to { bestmove, lines: [{ multipv, depth, cp, mate, pv: [uci] }] } or null if cancelled.
    */
   analyze(fen, opts = {}) {
+    if (this.failed) return Promise.resolve(null);
     return new Promise((resolve) => {
       this.queue.push({ fen, opts, resolve, lines: [] });
       this.pump();
@@ -87,13 +118,22 @@ export class Engine {
     } else {
       this.setOption('UCI_LimitStrength', 'false');
     }
-    this.send(`position fen ${job.fen}`);
+    if (o.moves?.length && o.startFen) this.send(`position fen ${o.startFen} moves ${o.moves.join(' ')}`);
+    else this.send(`position fen ${job.fen}`);
     let go = 'go';
     if (o.depth) go += ` depth ${o.depth}`;
     if (o.movetime) go += ` movetime ${o.movetime}`;
     if (o.nodes) go += ` nodes ${o.nodes}`;
     if (go === 'go') go += ' infinite';
     this.send(go);
+    // watchdog: a search that overruns its budget is stopped, and a worker that ignores stop is replaced
+    const budget = (o.movetime || 60000) + 10000;
+    clearTimeout(this.watchdog);
+    this.watchdog = setTimeout(() => {
+      if (this.job !== job) return;
+      this.send('stop');
+      this.watchdog = setTimeout(() => { if (this.job === job) this.restart(); }, 5000);
+    }, budget);
   }
 
   onLine(line) {
@@ -118,6 +158,7 @@ export class Engine {
         bestmove: parts[1] === '(none)' ? null : parts[1],
         lines: job.lines.filter(Boolean),
       };
+      clearTimeout(this.watchdog);
       this.job = null;
       job.resolve(result);
       this.pump();

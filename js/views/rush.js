@@ -15,13 +15,13 @@ export function rushTarget(k) { return Math.min(2900, 600 + k * 55); }
 
 function rushData() { return { best: {}, runs: [], ...store.get('rush', {}) }; }
 
-export async function mount(root) {
+export async function mount(root, params, isCurrent = () => true) {
   root.innerHTML = `${puzzleTabs('rush')}<div class="page"><div class="status"><span class="spinner"></span> Loading puzzles…</div></div>`;
   try { await loadIndex(); } catch (err) {
     root.querySelector('.page').innerHTML = `<div class="card stack"><h2 style="margin:0">Puzzles are not available</h2><p class="muted" style="margin:0">${esc(err.message)}</p></div>`;
     return;
   }
-  setup(root);
+  if (isCurrent()) setup(root);
 }
 
 function setup(root) {
@@ -39,14 +39,14 @@ function setup(root) {
             <button class="card" type="button" data-mode="${m}" style="cursor:pointer;text-align:left;font:inherit;color:inherit">
               <div class="row between nowrap"><b style="font-size:1.15rem">${m} minutes</b>${icons.clock.replace('<svg', '<svg style="width:22px;height:22px;color:var(--accent)"')}</div>
               <div class="stat-label" style="margin-top:8px">Best score</div>
-              <div class="stat-big">${d.best[m] ?? '—'}</div>
+              <div class="stat-big">${d.best[m] != null ? Number(d.best[m]) || 0 : '—'}</div>
               <div class="btn primary block" style="margin-top:10px">${icons.start} Start</div>
             </button>`).join('')}
         </div>
       </section>
       <section class="card">
         <h3>Recent runs</h3>
-        <div class="list">${runs.length ? runs.map(r => `<div class="list-item"><div class="grow"><div class="t">${r.score} solved · ${r.mode} min</div><div class="s">${timeAgo(r.t)} · reached ${r.maxRating || '—'}</div></div>${d.best[r.mode] === r.score ? '<span class="result-pill win">Best</span>' : ''}</div>`).join('') : '<div class="empty small">No runs yet.</div>'}</div>
+        <div class="list">${runs.length ? runs.map(r => `<div class="list-item"><div class="grow"><div class="t">${Number(r.score) || 0} solved · ${Number(r.mode) || 3} min</div><div class="s">${timeAgo(r.t)} · reached ${Number(r.maxRating) || '—'}</div></div>${d.best[r.mode] === r.score ? '<span class="result-pill win">Best</span>' : ''}</div>`).join('') : '<div class="empty small">No runs yet.</div>'}</div>
       </section>
     </div>`;
   root.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => run(root, +b.dataset.mode)));
@@ -77,7 +77,7 @@ function run(root, mode) {
   let score = 0, strikes = 0, k = 0, ended = false, player = null, maxRating = 0;
   const results = [];
   const seen = new Set();
-  const endAt = performance.now() + MODES[mode];
+  let endAt = null; // the clock starts once the first puzzle is on the board
   let nextP = null;
 
   const status = (msg, cls = 'info') => { const s = $('#r-status', root); s.className = 'status ' + cls; s.innerHTML = msg; };
@@ -92,6 +92,13 @@ function run(root, mode) {
     $('#r-score', root).textContent = score;
     $('#r-strikes', root).innerHTML = [0, 1, 2].map(i => `<i class="${i < strikes ? 'on' : ''}">${i < strikes ? '✕' : ''}</i>`).join('');
     $('#r-track', root).innerHTML = results.map(r => `<i class="${r.ok ? '' : 'x'}" title="${r.rating}"></i>`).join('');
+  }
+
+  // Rush results do not change your rating, but they do show which themes trip you up
+  function logAttempt(p, ok) {
+    const d = { rating: 1100, attempts: [], ...store.get('puzzles', {}) };
+    d.attempts.push({ id: p.id, t: Date.now(), pr: p.rating, ok, before: d.rating, after: d.rating, themes: p.themes, mode: 'rush' });
+    store.set('puzzles', d);
   }
 
   async function nextPuzzle() {
@@ -111,6 +118,7 @@ function run(root, mode) {
       onSolved: () => {
         score++;
         results.push({ ok: true, rating: p.rating });
+        logAttempt(p, 1);
         sound('good');
         renderHud();
         status(`${icons.check} Correct!`, 'ok');
@@ -119,6 +127,7 @@ function run(root, mode) {
       onWrong: (pl) => {
         strikes++;
         results.push({ ok: false, rating: p.rating });
+        logAttempt(p, 0);
         sound('bad');
         renderHud();
         setTimeout(() => { pl.render(false); pl.showArrow(); }, 350);
@@ -128,9 +137,11 @@ function run(root, mode) {
       },
     });
     player.start(250);
+    if (endAt == null) endAt = performance.now() + MODES[mode];
   }
 
   const tick = setInterval(() => {
+    if (endAt == null) return;
     const left = endAt - performance.now();
     const t = $('#r-time', root);
     if (t) { t.textContent = fmtClock(left); t.style.color = left < 15000 ? 'var(--bad)' : ''; }

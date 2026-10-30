@@ -9,8 +9,9 @@ import { esc, icons, fmtDate } from '../ui.js';
 const WEEK = 7 * 86400000;
 
 export function computeInsights(games, puzzles, rush) {
-  const chron = [...games].sort((a, b) => a.date - b.date);
-  const reviewed = chron.filter(g => g.review);
+  // only games you played count (not imported games you just watched, nor ones without a result)
+  const chron = [...games].filter(g => !g.spectator && g.userResult).sort((a, b) => a.date - b.date);
+  const reviewed = chron.filter(g => g.review && g.review.accuracy?.[g.userColor] != null);
   const score = (gs) => gs.length ? gs.reduce((s, g) => s + (g.userResult === 'win' ? 1 : g.userResult === 'draw' ? 0.5 : 0), 0) / gs.length : null;
   const wdl = (gs) => ({
     win: gs.filter(g => g.userResult === 'win').length,
@@ -18,8 +19,8 @@ export function computeInsights(games, puzzles, rush) {
     loss: gs.filter(g => g.userResult === 'loss').length,
   });
   const myAcc = (g) => g.review.accuracy[g.userColor];
-  const myCount = (g, l) => g.review.counts[g.userColor][l];
-  const avg = (xs) => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null;
+  const myCount = (g, l) => Number(g.review.counts[g.userColor]?.[l]) || 0;
+  const avg = (xs) => { const v = xs.filter(x => typeof x === 'number' && Number.isFinite(x)); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
 
   // weekly results (weeks start Monday)
   const weekKey = (ts) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); };
@@ -34,7 +35,7 @@ export function computeInsights(games, puzzles, rush) {
   const byColor = {};
   for (const c of ['w', 'b']) {
     const gs = chron.filter(g => g.userColor === c);
-    const rv = gs.filter(g => g.review);
+    const rv = gs.filter(g => reviewed.includes(g));
     byColor[c] = { games: gs.length, ...wdl(gs), score: score(gs), acc: avg(rv.map(myAcc)), blunders: avg(rv.map(g => myCount(g, 'blunder'))) };
   }
 
@@ -45,7 +46,7 @@ export function computeInsights(games, puzzles, rush) {
     fam.get(f).push(g);
   }
   const byOpening = [...fam.entries()].map(([name, gs]) => {
-    const rv = gs.filter(g => g.review);
+    const rv = gs.filter(g => reviewed.includes(g));
     return { name, games: gs.length, ...wdl(gs), score: score(gs), acc: avg(rv.map(myAcc)), whiteGames: gs.filter(g => g.userColor === 'w').length };
   }).sort((a, b) => b.games - a.games);
 
@@ -84,15 +85,20 @@ export function computeInsights(games, puzzles, rush) {
     recentAcc: avg(reviewed.slice(-10).map(myAcc)),
     recentBlunders: avg(reviewed.slice(-10).map(g => myCount(g, 'blunder'))),
     accSeries: reviewed.map((g, i) => ({ x: i, y: myAcc(g), tip: `${fmtDate(g.date)} vs ${g.botName}` })),
-    errSeries: reviewed.slice(-30).map(g => ({ label: '', tip: `${fmtDate(g.date)} vs ${g.botName}`, b: myCount(g, 'blunder'), m: myCount(g, 'mistake'), i: myCount(g, 'inaccuracy') })),
+    errSeries: reviewed.slice(-30).map(g => ({ label: '', tip: `${fmtDate(g.date)} vs ${g.botName}`, b: myCount(g, 'blunder'), m: myCount(g, 'mistake') + (myCount(g, 'miss') || 0), i: myCount(g, 'inaccuracy') })),
     weekly, byColor, byOpening, phases,
     puzzleRating: puzzles?.rating ?? null,
-    puzzleSeries: attempts.filter(a => a.mode !== 'rush').map((a, i) => ({ x: i, y: a.after, tip: fmtDate(a.t) })),
-    puzzleCount: attempts.length,
-    puzzleSolved: attempts.filter(a => a.ok === 1).length,
+    puzzleSeries: ratedSeries(attempts.filter(a => a.mode !== 'rush')),
+    puzzleCount: attempts.filter(a => a.mode !== 'rush').length,
+    puzzleSolved: attempts.filter(a => a.mode !== 'rush' && a.ok === 1).length,
     weakest,
     rushBest: rush?.best || {},
   };
+}
+
+function ratedSeries(rated) {
+  if (!rated.length) return [];
+  return [{ x: 0, y: rated[0].before, tip: 'Start' }, ...rated.map((a, i) => ({ x: i + 1, y: a.after, tip: fmtDate(a.t) }))];
 }
 
 function rolling(points, n) {
@@ -125,7 +131,7 @@ export function mount(root) {
       <div class="cards-2">
         <section class="card"><h3>Results by week</h3><div id="c-results"></div>${legend([{ name: 'Wins', color: 'var(--status-good)' }, { name: 'Draws', color: 'var(--status-neutral)' }, { name: 'Losses', color: 'var(--status-bad)' }])}</section>
         <section class="card"><h3>Accuracy over time</h3><div id="c-acc"></div>${legend([{ name: 'Game accuracy', color: 'var(--series-1)' }, { name: '5-game average', color: 'var(--series-2)' }])}</section>
-        <section class="card"><h3>Errors per game</h3><div id="c-err"></div>${legend([{ name: 'Blunders', color: 'var(--q-blunder)' }, { name: 'Mistakes', color: 'var(--q-mistake)' }, { name: 'Inaccuracies', color: 'var(--q-inaccuracy)' }])}</section>
+        <section class="card"><h3>Errors per game</h3><div id="c-err"></div>${legend([{ name: 'Blunders', color: 'var(--q-blunder)' }, { name: 'Mistakes & misses', color: 'var(--q-mistake)' }, { name: 'Inaccuracies', color: 'var(--q-inaccuracy)' }])}</section>
         <section class="card"><h3>By game phase</h3><div id="c-phase"></div><p class="tiny muted" style="margin:.6em 0 0">Your accuracy in each phase, with blunders per game that reached it.</p></section>
         <section class="card"><h3>By colour</h3>${colorTable(d.byColor)}</section>
         <section class="card"><h3>By opening</h3>${openingTable(d.byOpening)}</section>
@@ -148,7 +154,7 @@ export function mount(root) {
   stackedBars(root.querySelector('#c-err'), d.errSeries.map((g, i) => ({
     label: `${i + 1}`, tip: g.tip,
     parts: [{ key: 'b', value: g.b }, { key: 'm', value: g.m }, { key: 'i', value: g.i }],
-  })), [{ key: 'b', name: 'Blunders', color: 'var(--q-blunder)' }, { key: 'm', name: 'Mistakes', color: 'var(--q-mistake)' }, { key: 'i', name: 'Inaccuracies', color: 'var(--q-inaccuracy)' }]);
+  })), [{ key: 'b', name: 'Blunders', color: 'var(--q-blunder)' }, { key: 'm', name: 'Mistakes & misses', color: 'var(--q-mistake)' }, { key: 'i', name: 'Inaccuracies', color: 'var(--q-inaccuracy)' }]);
 
   const ph = d.phases;
   root.querySelector('#c-phase').innerHTML = d.reviewedCount ? hbars(['opening', 'middlegame', 'endgame'].filter(k => ph[k].moves).map(k => ({
@@ -157,7 +163,11 @@ export function mount(root) {
     color: 'var(--series-1)', title: `${ph[k].moves} moves in ${ph[k].games} games`,
   }))) : '<div class="empty small">Review games to see phase accuracy.</div>';
 
-  lineChart(root.querySelector('#c-puz'), [{ name: 'Rating', color: 'var(--series-1)', points: d.puzzleSeries }], { xLabel: i => `#${i + 1}` });
+  const ys = d.puzzleSeries.map(p => p.y);
+  const pad = ys.length ? Math.max(20, (Math.max(...ys) - Math.min(...ys)) * 0.15) : 0;
+  lineChart(root.querySelector('#c-puz'), [{ name: 'Rating', color: 'var(--series-1)', points: d.puzzleSeries }], {
+    xLabel: i => (i === 0 ? 'start' : `#${i}`), yMin: ys.length ? Math.min(...ys) - pad : undefined, yMax: ys.length ? Math.max(...ys) + pad : undefined,
+  });
 
   root.querySelector('#c-themes').innerHTML = d.weakest.length ? hbars(d.weakest.map(t => ({
     label: t.name, value: t.rate * 100, max: 100, text: `${Math.round(t.rate * 100)}% (${t.n})`, color: 'var(--series-2)',

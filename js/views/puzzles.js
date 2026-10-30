@@ -2,7 +2,7 @@
 import { Board } from '../board.js';
 import * as store from '../store.js';
 import { icons, esc, toast, $, sound } from '../ui.js';
-import { pickPuzzle, loadIndex, prefetch } from '../puzzle-data.js';
+import { pickPuzzle, loadIndex, prefetch, loadBucket } from '../puzzle-data.js';
 import { PuzzlePlayer, updateRating, START_RATING } from '../puzzle-player.js';
 import { themeName } from '../themes.js';
 
@@ -10,19 +10,102 @@ let ctx = null;
 export function unmount() { ctx?.destroy(); ctx = null; }
 
 export function puzzleTabs(active) {
-  return `<nav class="subtabs"><a href="#/puzzles" class="${active === 'rated' ? 'active' : ''}">Rated</a><a href="#/rush" class="${active === 'rush' ? 'active' : ''}">${icons.bolt.replace('<svg', '<svg style="width:15px;height:15px;vertical-align:-2px;margin-right:2px"')}Rush</a></nav>`;
+  return `<nav class="subtabs"><a href="#/puzzles" class="${active === 'rated' ? 'active' : ''}">Rated</a><a href="#/rush" class="${active === 'rush' ? 'active' : ''}">${icons.bolt.replace('<svg', '<svg style="width:15px;height:15px;vertical-align:-2px;margin-right:2px"')}Rush</a><a href="#/puzzles/daily" class="${active === 'daily' ? 'active' : ''}">Daily</a></nav>`;
+}
+
+// ---------- daily puzzle: same puzzle for everyone on a given date, unrated ----------
+export function todayKey(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function hashStr(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+export function dailyStreak(days, today = new Date()) {
+  let n = 0;
+  const d = new Date(today);
+  if (days[todayKey(d)] !== 1) d.setDate(d.getDate() - 1);
+  while (days[todayKey(d)] === 1) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+async function dailyPuzzle() {
+  const key = todayKey();
+  const h = hashStr('kibitz:' + key);
+  const list = await loadBucket(1200 + (h % 6) * 100);
+  return list[(h >>> 3) % list.length];
+}
+
+async function dailyView(root, isCurrent) {
+  root.innerHTML = `${puzzleTabs('daily')}<div class="page"><div class="status"><span class="spinner"></span> Loading today's puzzle…</div></div>`;
+  let pz;
+  try { await loadIndex(); pz = await dailyPuzzle(); } catch (err) {
+    root.querySelector('.page').innerHTML = `<div class="card">${esc(err.message)}</div>`;
+    return;
+  }
+  if (!isCurrent()) return;
+  const settings = store.getSettings();
+  const key = todayKey();
+  const d = { days: {}, ...store.get('daily', {}) };
+  root.innerHTML = `
+    ${puzzleTabs('daily')}
+    <div class="stage">
+      <div class="board-col"><div class="board-shell"><div id="board"></div></div></div>
+      <div class="side-col">
+        <section class="card"><div class="row between nowrap">
+          <div><div class="stat-label">Daily puzzle</div><div style="font-weight:800;font-size:1.2rem">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
+          <div style="text-align:right"><div class="stat-label">Streak</div><div class="stat-big" id="d-streak">${dailyStreak(d.days)}</div></div>
+        </div></section>
+        <div class="status info" id="p-status">${d.days[key] === 1 ? 'You already solved today\'s puzzle. Play it again for fun.' : 'Get ready…'}</div>
+        <div class="btn-row">
+          <button class="btn" id="p-hint" type="button">${icons.hint}<span>Hint</span></button>
+          <button class="btn" id="p-sol" type="button">${icons.eye}<span>Solution</span></button>
+          <button class="btn" id="p-flip" type="button">${icons.flip}<span>Flip</span></button>
+        </div>
+        <section class="card stack hidden" id="p-after"></section>
+      </div>
+    </div>`;
+  const board = new Board($('#board', root), { coordinates: settings.coords, animate: settings.animation });
+  let failed = false;
+  const status = (msg, cls = 'info') => { const s = $('#p-status', root); s.className = 'status ' + cls; s.innerHTML = msg; };
+  const save = (ok) => {
+    const dd = { days: {}, ...store.get('daily', {}) };
+    if (dd.days[key] === undefined || (ok && dd.days[key] !== 1 && !failed)) dd.days[key] = ok ? 1 : 0;
+    store.set('daily', dd);
+    $('#d-streak', root).textContent = dailyStreak(dd.days);
+  };
+  const after = () => {
+    const el = $('#p-after', root);
+    el.classList.remove('hidden');
+    el.innerHTML = `<div class="row between"><h3 style="margin:0">Rated ${pz.rating}</h3><a class="tiny" href="https://lichess.org/training/${encodeURIComponent(pz.id)}" target="_blank" rel="noopener">Puzzle ${esc(pz.id)} on Lichess</a></div>
+      <div class="theme-tags">${pz.themes.map(t => `<span>${esc(themeName(t))}</span>`).join('')}</div>
+      <p class="small muted" style="margin:0">A new daily puzzle appears tomorrow. Keep your streak going!</p>
+      <a class="btn primary block" href="#/puzzles">${icons.next} Rated puzzles</a>`;
+  };
+  const player = new PuzzlePlayer(board, pz, {
+    onStep: (p) => { if (p.chess.turn() === p.solver) status(`Find the best move for <b>${p.solverName}</b>`); },
+    onWrong: (p, uci, san) => { sound('bad'); if (!failed) { failed = true; save(false); } status(`${esc(san)} is not it. Try again.`, 'bad'); },
+    onSolved: () => { sound('good'); save(!failed); status(`${icons.check} ${failed ? 'Solved, but it does not count for the streak.' : 'Solved! Streak extended.'}`, 'ok'); after(); },
+  });
+  player.start();
+  $('#p-hint', root).addEventListener('click', () => { if (player.hint()) { if (!failed) { failed = true; save(false); } } });
+  $('#p-sol', root).addEventListener('click', () => { if (!failed) { failed = true; save(false); } player.showSolution(after); });
+  $('#p-flip', root).addEventListener('click', () => board.flip());
+  ctx = { destroy() { player.destroy(); board.destroy(); } };
 }
 
 function data() {
   return { rating: START_RATING, attempts: [], ...store.get('puzzles', {}) };
 }
 
-export async function mount(root) {
+export async function mount(root, params = [], isCurrent = () => true) {
+  if (params[0] === 'daily') return dailyView(root, isCurrent);
   root.innerHTML = `${puzzleTabs('rated')}<div class="page"><div class="status"><span class="spinner"></span> Loading puzzles…</div></div>`;
   try { await loadIndex(); } catch (err) {
     root.querySelector('.page').innerHTML = `<div class="card stack"><h2 style="margin:0">Puzzles are not available</h2><p class="muted" style="margin:0">${esc(err.message)} Check your connection and try again.</p><button class="btn" type="button" onclick="location.reload()">${icons.retry} Retry</button></div>`;
     return;
   }
+  if (!isCurrent()) return;
   const settings = store.getSettings();
   root.innerHTML = `
     ${puzzleTabs('rated')}
@@ -63,7 +146,7 @@ export async function mount(root) {
     const d = data();
     $('#p-rating', root).innerHTML = `${Math.round(d.rating)}${delta != null ? ` <span class="small ${delta >= 0 ? 'tq-excellent' : 'tq-blunder'}" style="font-weight:700">${delta >= 0 ? '+' : ''}${Math.round(delta)}</span>` : ''}`;
     const recent = d.attempts.filter(a => a.mode !== 'rush').slice(-24);
-    $('#p-recent', root).innerHTML = recent.map(a => `<i class="${a.ok === 1 ? '' : 'x'}" title="${a.ok === 1 ? 'Solved' : a.ok ? 'Solved with hint' : 'Failed'} · ${a.pr}"${a.ok === 0.5 ? ' style="background:var(--q-inaccuracy)"' : ''}></i>`).join('') || '<span class="tiny muted">Your results will show here.</span>';
+    $('#p-recent', root).innerHTML = recent.map(a => `<i class="${a.ok === 1 ? '' : 'x'}" title="${a.ok === 1 ? 'Solved' : a.ok ? 'Solved with hint' : 'Failed'} · ${Number(a.pr) || ''}"${a.ok === 0.5 ? ' style="background:var(--q-inaccuracy)"' : ''}></i>`).join('') || '<span class="tiny muted">Your results will show here.</span>';
     let streak = 0;
     for (let i = recent.length - 1; i >= 0 && recent[i].ok === 1; i--) streak++;
     $('#p-streak', root).textContent = streak >= 2 ? `${streak} in a row` : '';
@@ -74,7 +157,7 @@ export async function mount(root) {
     rated = true;
     const d = data();
     const before = d.rating;
-    const after = updateRating(before, puzzle.rating, score, d.attempts.length);
+    const after = updateRating(before, puzzle.rating, score, d.attempts.filter(a => a.mode !== 'rush').length);
     d.attempts.push({ id: puzzle.id, t: Date.now(), pr: puzzle.rating, ok: score, before: Math.round(before * 10) / 10, after: Math.round(after * 10) / 10, themes: puzzle.themes, mode: 'rated' });
     d.rating = after;
     store.set('puzzles', d);
@@ -97,6 +180,7 @@ export async function mount(root) {
     if (loading) return;
     loading = true;
     player?.destroy();
+    player = null;
     $('#p-after', root).classList.add('hidden');
     $('#p-next', root).querySelector('span').textContent = 'Skip';
     status('<span class="spinner"></span> Finding a puzzle…');
@@ -140,7 +224,7 @@ export async function mount(root) {
   }
 
   $('#p-hint', root).addEventListener('click', () => {
-    if (!player || player.done) return;
+    if (loading || !player || player.done) return;
     if (player.hint()) {
       if (usedHint) player.showArrow('rgba(32,150,210,.85)');
       usedHint = true;
@@ -148,7 +232,7 @@ export async function mount(root) {
     }
   });
   $('#p-sol', root).addEventListener('click', () => {
-    if (!player || player.done && rated) return;
+    if (loading || !player || (player.done && rated)) return;
     const delta = record(0);
     $('#p-prating', root).textContent = puzzle.rating;
     status(`Here is the solution.${delta != null ? ` Rating ${Math.round(delta)}.` : ''}`, 'info');
@@ -156,6 +240,7 @@ export async function mount(root) {
   });
   $('#p-flip', root).addEventListener('click', () => board.flip());
   $('#p-next', root).addEventListener('click', () => {
+    if (loading) return;
     // skipping an untouched puzzle is free; abandoning one you started counts as a miss
     if (player && !player.done && moved && !rated) record(0);
     next();

@@ -3,6 +3,11 @@
 
 const PROMO_ORDER = ['q', 'n', 'r', 'b'];
 
+/** URL of a piece image ('wK', 'bP', ...) in the piece set chosen in settings. */
+export function pieceUrl(code) {
+  return `img/pieces/${document.documentElement.dataset.pieces || 'cburnett'}/${code}.svg`;
+}
+
 export function sqToXY(sq, orientation) {
   const f = sq.charCodeAt(0) - 97, r = sq.charCodeAt(1) - 49;
   return orientation === 'white' ? [f, 7 - r] : [7 - f, r];
@@ -272,6 +277,7 @@ export class Board {
     if (this.userArrows.length || this.userCircles.length) this.clearUserDrawings();
     if (!sq) return;
     e.preventDefault();
+    if (this.opts.onSquare) { this.opts.onSquare(sq); return; }
     if (this.selected && this.selected !== sq && this.canMove(this.selected, sq)) {
       this.tryMove(this.selected, sq);
       return;
@@ -390,7 +396,7 @@ export class Board {
       const b = document.createElement('button');
       b.type = 'button';
       b.setAttribute('aria-label', { q: 'Queen', n: 'Knight', r: 'Rook', b: 'Bishop' }[p]);
-      b.style.backgroundImage = `url(img/pieces/${color}${p.toUpperCase()}.svg)`;
+      b.style.backgroundImage = `url(${pieceUrl(color + p.toUpperCase())})`;
       b.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
       b.addEventListener('click', (e) => {
         e.stopPropagation();

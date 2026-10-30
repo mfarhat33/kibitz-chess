@@ -204,6 +204,7 @@ export function evalGraph(el, wins, { cur = 0, marks = [], onPick } = {}) {
   const H = 120;
   const n = wins.length;
   let sx;
+  let at = cur; // redraws (resize, rotation) keep the latest position
   responsive(el, H, (W) => {
     sx = (i) => (n <= 1 ? 0 : i / (n - 1) * W);
     const sy = (w) => H - (w / 100) * H;
@@ -217,7 +218,7 @@ export function evalGraph(el, wins, { cur = 0, marks = [], onPick } = {}) {
       const x = sx(m.ply), y = sy(wins[m.ply]);
       g += `<circle cx="${x}" cy="${y}" r="4.5" fill="var(--q-${m.cls})" stroke="var(--surface)" stroke-width="2"/>`;
     }
-    g += `<line class="cur" x1="${sx(cur)}" x2="${sx(cur)}" y1="0" y2="${H}" stroke="var(--accent)" stroke-width="2"/>`;
+    g += `<line class="cur" x1="${sx(at)}" x2="${sx(at)}" y1="0" y2="${H}" stroke="var(--accent)" stroke-width="2"/>`;
     g += `<rect class="hit" x="0" y="0" width="${W}" height="${H}" fill="transparent" style="cursor:pointer"/>`;
     return g;
   }, (svg, W) => {
@@ -236,6 +237,7 @@ export function evalGraph(el, wins, { cur = 0, marks = [], onPick } = {}) {
   });
   return {
     setCur(i) {
+      at = i;
       const line = el.querySelector('line.cur');
       if (line && sx) { line.setAttribute('x1', sx(i)); line.setAttribute('x2', sx(i)); }
     },

@@ -11,12 +11,13 @@ import { addLine, trainerTabs } from './trainer.js';
 let ctx = null;
 export function unmount() { ctx?.destroy(); ctx = null; }
 
-export async function mount(root, params) {
+export async function mount(root, params, isCurrent = () => true) {
   root.innerHTML = `${trainerTabs('explorer')}<div class="page"><div class="status"><span class="spinner"></span> Loading openings…</div></div>`;
   try { await loadOpenings(); } catch {
     root.querySelector('.page').innerHTML = '<div class="card">Could not load the openings data. Check your connection and reload.</div>';
     return;
   }
+  if (!isCurrent()) return;
   const settings = store.getSettings();
   let line = params[0] ? params[0].split(',').filter(Boolean) : (store.get('explorer.line') || []);
   let ply = line.length;

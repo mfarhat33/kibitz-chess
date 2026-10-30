@@ -11,10 +11,11 @@ globalThis.fetch = async (url) => {
   return { ok: true, status: 200, json: async () => JSON.parse(fs.readFileSync(p, 'utf8')) };
 };
 
-const { winPct, moveAccuracy, labelFor, gameAccuracy, classify, positions, phaseOf } = await import('../js/analysis.js');
+const { winPct, moveAccuracy, labelFor, gameAccuracy, classify, positions, phaseOf, isSacrifice, analyzePositions } = await import('../js/analysis.js');
 const { botParams, pickCandidate, LEVELS } = await import('../js/bot.js');
 const { newCard, reviewCard, qualityFor, dueCards } = await import('../js/srs.js');
 const { mergeData, validateImport } = await import('../js/store.js');
+const { dailyStreak } = await import('../js/views/puzzles.js');
 const { updateRating, isCorrect, kFactor } = await import('../js/puzzle-player.js');
 const { explainMove, playOut } = await import('../js/explain.js');
 const { parseInfo, toWhite, formatScore } = await import('../js/engine.js');
@@ -27,9 +28,11 @@ test('win percentage is symmetric and saturates', () => {
   assert.equal(winPct({ cp: 0 }), 50);
   assert.ok(Math.abs(winPct({ cp: 300 }) + winPct({ cp: -300 }) - 100) < 1e-9);
   assert.ok(winPct({ cp: 300 }) > 74 && winPct({ cp: 300 }) < 76);
-  assert.equal(winPct({ mate: 3 }), 100);
-  assert.equal(winPct({ mate: -2 }), 0);
-  assert.equal(winPct({ mate: 0, win: 'b' }), 0);
+  // like Lichess, a forced mate counts as +/-1000 centipawns
+  assert.equal(winPct({ mate: 3 }), winPct({ cp: 1000 }));
+  assert.ok(winPct({ mate: 3 }) > 97 && winPct({ mate: 3 }) < 98);
+  assert.equal(winPct({ mate: -2 }), winPct({ cp: -1000 }));
+  assert.equal(winPct({ mate: 0, win: 'b' }), winPct({ cp: -1000 }));
   assert.equal(winPct({ cp: 5000 }), winPct({ cp: 1000 }));
 });
 
@@ -259,4 +262,91 @@ test('insights aggregate results by colour and opening', () => {
   assert.equal(d.weakest[0].key, 'fork');
   assert.ok(Math.abs(d.weakest[0].rate - 1 / 3) < 1e-9);
   assert.ok(!d.weakest.some(t => t.key === 'short'), 'meta themes are excluded');
+});
+
+test('great, brilliant and miss labels', () => {
+  // great: the only good move. 1.e4 e5 2.Qh5 Nc6 3.Bc4: Black must defend f7 (g6 / Qe7); others lose
+  const moves = ['e2e4', 'e7e5', 'd1h5', 'b8c6', 'f1c4', 'g7g6'];
+  const fens = positions(moves);
+  const raw = {
+    evals: [{ cp: 30 }, { cp: 30 }, { cp: 30 }, { cp: 20 }, { cp: 30 }, { cp: 30 }, { cp: 40 }],
+    best: ['e2e4', 'e7e5', 'd1h5', 'b8c6', 'f1c4', 'g7g6', 'h5f3'],
+    pv: [[], [], [], [], [], ['g7g6'], ['h5f3']],
+    second: [null, null, null, null, null, { mate: 1, move: 'g8f6' }, null],
+  };
+  const r = classify(raw, moves, fens, () => false);
+  assert.equal(r.labels[5], 'great');
+  // a recapture is never "great"
+  const m2 = ['e2e4', 'd7d5', 'e4d5', 'd8d5'];
+  const f2 = positions(m2);
+  const r2 = classify({ evals: [{ cp: 30 }, { cp: 30 }, { cp: 30 }, { cp: 30 }, { cp: 30 }], best: m2.concat([null]), pv: [[], [], [], [], []], second: [null, null, null, { cp: -400, move: 'g8f6' }, null] }, m2, f2, () => false);
+  assert.equal(r2.labels[3], 'best');
+  // brilliant needs a real sacrifice
+  assert.ok(isSacrifice('r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 3', 'c4f7'), 'Bxf7+ gives up the bishop for a pawn');
+  assert.ok(!isSacrifice('r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 3', 'e1g1'));
+  assert.ok(!isSacrifice('rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2', 'e4d5'), 'pawn captures are not sacrifices');
+  // miss: Black blunders a piece, White does not take it and gives the advantage back
+  const m3 = ['e2e4', 'e7e5', 'g1f3', 'f8a3', 'b1c3'];
+  const f3 = positions(m3);
+  const r3 = classify({
+    evals: [{ cp: 30 }, { cp: 30 }, { cp: 30 }, { cp: 30 }, { cp: 330 }, { cp: 20 }],
+    best: ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'b2a3', null], pv: [[], [], [], [], ['b2a3'], []],
+    second: [null, null, null, null, null, null],
+  }, m3, f3, () => false);
+  assert.equal(r3.labels[3], 'blunder');
+  assert.equal(r3.labels[4], 'miss');
+});
+
+test('explanations use the right voice and only say undefended when true', () => {
+  // bot (Black) hangs its queen: the text must not say "your"
+  const moves = ['e2e4', 'e7e5', 'g1f3', 'd8h4'];
+  const fens = positions(moves);
+  const review = {
+    labels: ['book', 'book', 'book', 'blunder'],
+    evals: [{ cp: 30 }, { cp: 30 }, { cp: 30 }, { cp: 30 }, { cp: 900 }],
+    best: [null, null, null, 'b8c6', 'f3h4'], pv: [[], [], [], ['b8c6'], ['f3h4', 'g8f6', 'd2d3']], acc: [],
+  };
+  const ex = explainMove(3, { fens, moves, sans: uciLineToSan(fens[0], moves), review, viewer: 'w', names: { w: 'You', b: 'Sprout' } });
+  assert.match(ex.lines[0], /^Sprout's queen on h4 can simply be taken/);
+  assert.doesNotMatch(ex.lines.join(' '), /\byour queen\b/i);
+  // defended knight attacked by a pawn: not "undefended"
+  const fen = 'rnbqkbnr/pp1ppppp/8/8/1p6/2N4P/PPPPPPP1/R1BQKBNR w KQkq - 0 1';
+  const g2 = { fens: [fen, fenAfter(fen, 'h3h4')], moves: ['h3h4'], sans: ['h4'], viewer: 'w', names: { w: 'You', b: 'Bot' },
+    review: { labels: ['mistake'], evals: [{ cp: 0 }, { cp: -250 }], best: ['c3e4', 'b4c3'], pv: [['c3e4'], ['b4c3', 'b2c3', 'g8f6']], acc: [] } };
+  const ex2 = explainMove(0, g2);
+  assert.doesNotMatch(ex2.lines.join(' '), /undefended/);
+  assert.match(ex2.lines[0], /knight on c3 is attacked by a pawn/);
+});
+
+function fenAfter(fen, u) { const c = new Chess(fen); c.move({ from: u.slice(0, 2), to: u.slice(2, 4) }); return c.fen(); }
+
+test('review sees threefold repetition through the game history', async () => {
+  // knights shuffle back and forth: the final position is a draw by repetition
+  const moves = ['g1f3', 'g8f6', 'f3g1', 'f6g8', 'g1f3', 'g8f6', 'f3g1', 'f6g8'];
+  const fens = positions(moves);
+  const calls = [];
+  const stub = { analyze: async (fen, o) => { calls.push(o.moves.length); return { bestmove: 'e2e4', lines: [{ cp: 900, mate: null, pv: ['e2e4'] }] }; } };
+  const raw = await analyzePositions(stub, fens, { depth: 5, moves });
+  assert.deepEqual(raw.evals[8], { cp: 0, mate: null }, 'repeated position scores as a draw');
+  assert.equal(calls.length, 8, 'the drawn final position is not sent to the engine');
+  assert.equal(calls[7], 7, 'history is passed so the engine sees repetitions');
+});
+
+test('imports are sanitised and new progress merges', () => {
+  const v = validateImport({ format: 'kibitz-chess-progress', data: {
+    rush: { best: { 3: '<img src=x onerror=alert(1)>' }, runs: [{ score: '<b>', mode: 3, t: 1 }] },
+    'game:a': { id: 'a', moves: ['e2e4', 'xx'], botName: '<script>', review: null }, evil: { a: 1 },
+  } });
+  assert.equal(v.data.rush.best[3], 0);
+  assert.equal(v.data.rush.runs[0].score, 0);
+  assert.deepEqual(v.data['game:a'].moves, ['e2e4']);
+  assert.ok(!('evil' in v.data));
+  const m = mergeData(
+    { learn: { lessons: { forks: { done: true, t: 1 } }, drills: {} }, daily: { days: { '2026-10-29': 1 } }, quiz: { best: { mixed: 7 }, runs: [] } },
+    { learn: { lessons: { pins: { done: true, t: 2 } }, drills: { kqk: { done: true, best: 9 } } }, daily: { days: { '2026-10-30': 1, '2026-10-29': 0 } }, quiz: { best: { mixed: 5, mate: 9 }, runs: [] } },
+  );
+  assert.ok(m.learn.lessons.forks.done && m.learn.lessons.pins.done && m.learn.drills.kqk.done);
+  assert.deepEqual(m.daily.days, { '2026-10-29': 1, '2026-10-30': 1 });
+  assert.deepEqual(m.quiz.best, { mixed: 7, mate: 9 });
+  assert.equal(dailyStreak(m.daily.days, new Date(2026, 9, 30)), 2);
 });

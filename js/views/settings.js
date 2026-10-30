@@ -3,6 +3,9 @@ import * as store from '../store.js';
 import { applyTheme } from '../main.js';
 import { icons, esc, toast, dialog, confirm, downloadFile, pickFile, $ } from '../ui.js';
 
+const PIECES = [
+  { id: 'cburnett', name: 'Classic' }, { id: 'merida', name: 'Merida' }, { id: 'chessnut', name: 'Chessnut' }, { id: 'fantasy', name: 'Fantasy' },
+];
 const BOARDS = [
   { id: 'slate', name: 'Slate' }, { id: 'walnut', name: 'Walnut' }, { id: 'ocean', name: 'Ocean' },
   { id: 'olive', name: 'Olive' }, { id: 'mono', name: 'Mono' },
@@ -26,6 +29,11 @@ export function mount(root) {
         <div class="field"><span class="label">Board colours</span>
           <div class="chips" id="s-board" role="group" aria-label="Board colours">
             ${BOARDS.map(b => `<button type="button" class="chip" data-v="${b.id}"><span style="display:inline-flex;vertical-align:-3px;margin-right:6px;border-radius:4px;overflow:hidden"><i data-board-swatch="${b.id}" style="display:block;width:16px;height:16px"></i></span>${b.name}</button>`).join('')}
+          </div>
+        </div>
+        <div class="field"><span class="label">Pieces</span>
+          <div class="chips" id="s-pieces" role="group" aria-label="Piece set">
+            ${PIECES.map(p => `<button type="button" class="chip" data-v="${p.id}" style="display:inline-flex;align-items:center;gap:6px"><img src="img/pieces/${p.id}/wN.svg" alt="" width="22" height="22">${p.name}</button>`).join('')}
           </div>
         </div>
         <label class="toggle"><span>Show coordinates</span><input type="checkbox" id="s-coords" ${s.coords ? 'checked' : ''}></label>
@@ -56,7 +64,7 @@ export function mount(root) {
           <li>Puzzles: <a href="https://database.lichess.org/#puzzles" target="_blank" rel="noopener">Lichess puzzle database</a>, CC0.</li>
           <li>Opening names: <a href="https://github.com/lichess-org/chess-openings" target="_blank" rel="noopener">lichess-org/chess-openings</a>, CC0.</li>
           <li>Move rules: <a href="https://github.com/jhlywa/chess.js" target="_blank" rel="noopener">chess.js</a>, BSD-2-Clause.</li>
-          <li>Pieces: Colin M.L. Burnett ("cburnett"), GPLv2+.</li>
+          <li>Pieces: Classic by Colin M.L. Burnett (GPLv2+), Merida by Armando Hernandez Marroquin (GPLv2+), Chessnut by Alexis Luengas (Apache-2.0), Fantasy by Maurizio Monge (MIT).</li>
         </ul>
         <p class="tiny muted" style="margin:0">Kibitz Chess is free software under the GPL-3.0. Bot ratings are approximate.</p>
       </section>
@@ -70,6 +78,7 @@ export function mount(root) {
   };
   seg('#s-theme', s.theme, (v) => { store.setSettings({ theme: v }); applyTheme(); });
   seg('#s-board', s.board, (v) => { store.setSettings({ board: v }); applyTheme(); });
+  seg('#s-pieces', s.pieces, (v) => { store.setSettings({ pieces: v }); applyTheme(); });
   seg('#s-depth', s.reviewDepth, (v) => store.setSettings({ reviewDepth: v }));
   for (const sw of root.querySelectorAll('[data-board-swatch]')) {
     const [l, d] = SWATCH[sw.dataset.boardSwatch];
