@@ -1,0 +1,16 @@
+{
+  "name": "Kibitz Chess",
+  "short_name": "Kibitz",
+  "description": "Free personal chess training: bots, game review, puzzles, openings and insights.",
+  "start_url": "./#/play",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f2ee",
+  "theme_color": "#3b5bdb",
+  "icons": [
+    { "src": "img/icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "img/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

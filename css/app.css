@@ -481,3 +481,7 @@ dialog h2 { margin-bottom: .4em; }
 .acc-box.me { outline: 2px solid var(--accent); outline-offset: -2px; }
 .explain-head { display: flex; gap: 10px; align-items: center; font-weight: 750; font-size: 1.02rem; }
 .explain-head .q { width: 26px; height: 26px; font-size: 12px; }
+.status svg, .explain-head svg, .card > .row svg, .list-item > svg { width: 20px; height: 20px; flex: none; }
+.list > * { min-width: 0; }
+button.list-item { width: 100%; min-width: 0; }
+.side-col > * { min-width: 0; max-width: 100%; }
