@@ -17,7 +17,7 @@ export async function mount(root, params) {
   let startFen = saved.startFen || START_FEN;
   let line = saved.line || [];
   if (params[0]) { startFen = START_FEN; line = params[0].split(',').filter(Boolean); }
-  let ply = line.length;
+  let ply = Number.isInteger(saved.ply) && !params[0] ? Math.max(0, Math.min(saved.ply, line.length)) : line.length;
   let headers = saved.headers || null;
   let alive = true;
   const settings = store.getSettings();
@@ -79,7 +79,7 @@ export async function mount(root, params) {
     moveSound(h[h.length - 1], c);
     update();
   }
-  function persist() { store.set('analysis.board', { startFen, line, headers, orientation: board.orientation }); }
+  function persist() { store.set('analysis.board', { startFen, line, ply, headers, orientation: board.orientation }); }
 
   let token = 0;
   function update() {
@@ -144,7 +144,10 @@ export async function mount(root, params) {
       const arrows = lines.slice(0, n).map((l, i) => { const m = uciToMove(l.pv[0]); return { from: m.from, to: m.to, color: i === 0 ? 'rgba(16,150,110,.8)' : 'rgba(16,150,110,.35)', width: i === 0 ? 0.16 : 0.11 }; });
       board.setArrows(arrows);
     };
-    eng.analyze(fen, { depth: 22, movetime: 8000, multipv: n, onInfo: show }).then(r => { if (r) show(r.lines); });
+    eng.analyze(fen, { depth: 22, movetime: 8000, multipv: n, onInfo: show }).then(r => {
+      if (r) show(r.lines);
+      else if (eng.failed && alive && t === token) $('#a-depth', root).textContent = 'Engine unavailable: reload the page';
+    });
   }
 
   function setBar(score) {

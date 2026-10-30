@@ -3,7 +3,7 @@
 import { Board } from '../board.js';
 import { Chess, dests, checkSquare, playUci, uciToMove, colorName, START_FEN } from '../chessutil.js';
 import { getEngine, toWhite } from '../engine.js';
-import { positions, winPct, labelFor, LABEL_TEXT, LABEL_GLYPH, BAD_LABELS } from '../analysis.js';
+import { positions, gradeMove, LABEL_TEXT, LABEL_GLYPH, BAD_LABELS } from '../analysis.js';
 import { reviewCard } from '../srs.js';
 import * as store from '../store.js';
 import { icons, esc, $, sound, moveSound, fmtDate } from '../ui.js';
@@ -129,12 +129,12 @@ function practise(root, queue) {
         else if (after.isGameOver()) score = { cp: 0 };
         else {
           const r = await engine.analyze(after.fen(), { depth: m.depth, movetime: 4000, startFen: m.startFen, moves: [...m.prefix, uci] });
-          if (!alive || tok !== token) return;
+          // the position may have been settled meanwhile (e.g. "Show best" was pressed)
+          if (!alive || tok !== token || $('#m-next', card)) return;
           if (!r?.lines[0]) { status('The engine is not available right now.', 'bad'); reset(); return; }
           score = toWhite(r.lines[0], after.turn());
         }
-        const pov = (w) => (m.color === 'w' ? w : 100 - w);
-        label = labelFor(Math.max(0, pov(winPct(m.bestEval)) - pov(winPct(score))), false);
+        label = gradeMove(m.bestEval, score, m.color, { givesMate: after.isCheckmate() }).label;
       }
       const good = !BAD_LABELS.includes(label);
       sound(good ? 'good' : 'bad');

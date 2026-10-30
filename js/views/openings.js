@@ -145,7 +145,10 @@ export async function mount(root, params, isCurrent = () => true) {
       const b = uciToMove(l.pv[0]);
       board.setArrows([{ from: b.from, to: b.to, color: 'rgba(16,150,110,.7)' }]);
     };
-    eng.analyze(fen, { depth: 20, movetime: 5000, onInfo: show }).then(r => { if (r) show(r.lines); });
+    eng.analyze(fen, { depth: 20, movetime: 5000, onInfo: show }).then(r => {
+      if (r) show(r.lines);
+      else if (eng.failed && alive && token === engineToken) $('#o-depth', root).textContent = 'engine unavailable: reload the page';
+    });
   }
 
   function bindToggle() {

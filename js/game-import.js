@@ -5,7 +5,7 @@ import { openingOf } from './openings-data.js';
 
 /** Recent standard games for a username: [{ site, id, pgn, white, black, result, date, speed }] */
 export async function fetchRecentGames(site, username, max = 20) {
-  const user = username.trim();
+  const user = username.trim().replace(/^@/, '');
   if (!/^[A-Za-z0-9_-]{2,30}$/.test(user)) throw new Error('That does not look like a valid username.');
   if (site === 'lichess') {
     const url = `https://lichess.org/api/games/user/${encodeURIComponent(user)}?max=${max}&pgnInJson=true&perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence`;
@@ -14,20 +14,24 @@ export async function fetchRecentGames(site, username, max = 20) {
     if (res.status === 429) throw new Error('Lichess is rate-limiting requests. Wait a minute and try again.');
     if (!res.ok) throw new Error(`Lichess answered with an error (${res.status}).`);
     const text = await res.text();
-    return text.split('\n').filter(Boolean).map(line => JSON.parse(line))
-      .filter(g => g.variant === 'standard' && g.pgn)
-      .map(g => ({ site, id: g.id, pgn: g.pgn, date: g.createdAt, speed: g.speed }));
+    // one damaged line should not sink the whole import
+    const rows = text.split('\n').filter(Boolean).map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+    if (!rows.length && text.trim()) throw new Error('Lichess sent an answer this app could not read. Try again later.');
+    return rows.filter(g => g.variant === 'standard' && g.pgn)
+      .map(g => ({ site, id: g.id, pgn: g.pgn, date: g.lastMoveAt || g.createdAt, speed: g.speed }));
   }
   const base = `https://api.chess.com/pub/player/${encodeURIComponent(user.toLowerCase())}/games/archives`;
   const res = await fetch(base);
   if (res.status === 404) throw new Error('No chess.com player with that name.');
   if (!res.ok) throw new Error(`chess.com answered with an error (${res.status}).`);
-  const { archives = [] } = await res.json();
+  let archives = [];
+  try { ({ archives = [] } = await res.json()); } catch { throw new Error('chess.com sent an answer this app could not read. Try again later.'); }
   const out = [];
   for (const url of [...archives].reverse()) {
     const r = await fetch(url);
     if (!r.ok) break;
-    const { games = [] } = await r.json();
+    let games = [];
+    try { ({ games = [] } = await r.json()); } catch { break; }
     for (const g of [...games].reverse()) {
       if (g.rules !== 'chess' || !g.pgn) continue;
       out.push({ site, id: g.uuid || g.url, pgn: g.pgn, date: (g.end_time || 0) * 1000, speed: g.time_class });
@@ -52,7 +56,7 @@ export function parsePgn(pgn) {
  * Builds a review-ready game record from a PGN. `me` is the username to find (case-insensitive),
  * or an explicit colour 'w'/'b', or null for a game you only watched.
  */
-export function recordFromPgn(pgn, me, { site = 'import' } = {}) {
+export function recordFromPgn(pgn, me, { site = 'import', date = null } = {}) {
   const { headers, startFen, moves, sans, final } = parsePgn(pgn);
   if (moves.length < 2) throw new Error('The game is too short to review.');
   const white = headers.White || 'White', black = headers.Black || 'Black';
@@ -67,8 +71,15 @@ export function recordFromPgn(pgn, me, { site = 'import' } = {}) {
     : final.isCheckmate() ? (final.turn() === 'w' ? '0-1' : '1-0') : final.isDraw() ? '1/2-1/2' : '*';
   const userResult = spectator || result === '*' ? null : result === '1/2-1/2' ? 'draw' : ((result === '1-0') === (colour === 'w') ? 'win' : 'loss');
   const opp = colour === 'w' ? 'Black' : 'White';
+  // UTCDate/UTCTime are UTC; a plain Date tag is a local calendar date
   const dateStr = headers.UTCDate || headers.Date;
-  const parsed = dateStr && /^\d{4}\.\d{2}\.\d{2}$/.test(dateStr) ? Date.parse(dateStr.replace(/\./g, '-')) : NaN;
+  let parsed = NaN;
+  if (headers.UTCDate && /^\d{4}\.\d{2}\.\d{2}$/.test(headers.UTCDate)) {
+    parsed = Date.parse(`${headers.UTCDate.replace(/\./g, '-')}T${/^\d{2}:\d{2}:\d{2}$/.test(headers.UTCTime || '') ? headers.UTCTime : '12:00:00'}Z`);
+  } else if (headers.Date && /^\d{4}\.\d{2}\.\d{2}$/.test(headers.Date)) {
+    const [y, mo, d] = headers.Date.split('.').map(Number);
+    parsed = new Date(y, mo - 1, d, 12).getTime();
+  }
   const op = startFen === START_FEN ? openingOf(moves) : null;
   const key = `${site}:${headers.Link || headers.Site || ''}:${dateStr || ''}:${white}:${black}:${moves.length}`;
   let h = 0;
@@ -76,7 +87,7 @@ export function recordFromPgn(pgn, me, { site = 'import' } = {}) {
   return {
     id: 'imp' + (h >>> 0).toString(36),
     imported: true, spectator, source: site,
-    date: Number.isFinite(parsed) ? parsed : Date.now(), endedAt: Date.now(),
+    date: date || (Number.isFinite(parsed) ? parsed : Date.now()), endedAt: Date.now(),
     startFen: startFen === START_FEN ? undefined : startFen,
     whiteName: white, blackName: black,
     userColor: colour, botName: headers[opp] || opp, botLabel: headers[opp + 'Elo'] || '', botElo: +(headers[opp + 'Elo']) || null,

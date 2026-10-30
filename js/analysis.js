@@ -180,30 +180,46 @@ function enPrise(c, sq, owner) {
   return caps[0] < VALUES[p.type];
 }
 
+/** The same position with the other side to move (to ask what the opponent could already take). */
+function opponentToMove(fen) {
+  const parts = fen.split(' ');
+  parts[1] = parts[1] === 'w' ? 'b' : 'w';
+  parts[3] = '-';
+  try { return new Chess(parts.join(' ')); } catch { return null; }
+}
+
 /**
- * True if the move gives up material on purpose: the moved piece (knight or bigger) can be taken
- * at a loss, or the move leaves another of its pieces to be taken. Only legal captures count.
+ * If the move gives up material on purpose, returns { square, piece } of what it offers: the moved
+ * piece (knight or bigger) left where it can be taken at a loss, or another piece the move leaves
+ * en prise. A piece that was already hanging only counts when the opponent's best line (`reply`,
+ * a UCI list) does not take it, i.e. it was left there deliberately as poison. Null otherwise.
  */
-export function isSacrifice(fen, uci) {
+export function isSacrifice(fen, uci, reply = null) {
   const c = new Chess(fen);
   const mover = c.turn();
   const m = playUci(c, uci);
-  if (!m || c.isCheckmate()) return false;
+  if (!m || c.isCheckmate()) return null;
+  const before = opponentToMove(fen);
+  const wasEnPrise = (sq) => !!before && enPrise(before, sq, mover);
   const piece = m.promotion || m.piece;
   const val = VALUES[piece];
-  if (piece !== 'k' && val >= 3) {
+  if (piece !== 'k' && val >= 3 && !wasEnPrise(m.from)) {
     const gained = m.captured ? VALUES[m.captured] : 0;
     const caps = legalCapturers(c, m.to);
     if (caps.length && gained < val) {
       const defended = c.attackers(m.to, mover).length > 0;
-      if (!defended || caps[0] + gained < val) return true;
+      if (!defended || caps[0] + gained < val) return { square: m.to, piece };
     }
   }
+  // the opponent's next few moves in the engine line: does it actually go for the piece?
+  const theyTake = (sq) => !!reply && reply.filter((_, k) => k % 2 === 0).slice(0, 3).some(u => u.slice(2, 4) === sq);
   for (const row of c.board()) for (const p of row) {
     if (!p || p.color !== mover || p.square === m.to || p.type === 'k' || VALUES[p.type] < 3) continue;
-    if (enPrise(c, p.square, mover)) return true;
+    if (!enPrise(c, p.square, mover)) continue;
+    if (!wasEnPrise(p.square)) return { square: p.square, piece: p.type };
+    if (reply && !theyTake(p.square)) return { square: p.square, piece: p.type };
   }
-  return false;
+  return null;
 }
 
 const SEVERITY = { inaccuracy: 1, miss: 2, mistake: 2, blunder: 3 };
@@ -214,6 +230,43 @@ function moverScore(e, color) {
   if (!e) return { cp: 0, mate: null };
   if (e.mate === 0) return { cp: null, mate: 0, lost: e.win !== color };
   return { cp: e.cp == null ? null : e.cp * s, mate: e.mate == null ? null : e.mate * s };
+}
+
+/**
+ * Grades one move from the evaluation before it (the best line) and after it, for the side that
+ * moved. Shared by the review, "retry this move" and mistake practice so they always agree.
+ * engineBest: the move is the engine's own first choice (mate rules then do not apply).
+ */
+export function gradeMove(beforeEval, afterEval, color, { engineBest = false, givesMate = false } = {}) {
+  const pov = (w) => (color === 'w' ? w : 100 - w);
+  const before = pov(winPct(beforeEval));
+  const after = pov(winPct(afterEval));
+  const loss = Math.max(0, before - after);
+  // a move that scores clearly better than the engine's own first choice was at least as good
+  let label = givesMate ? 'best' : labelFor(loss, engineBest || after - before >= 1);
+  if (!engineBest && !givesMate) {
+    // mates, graded like Lichess: allowing a forced mate (or throwing one away) is a blunder
+    // unless the position was already lost (or still overwhelmingly won)
+    const b = moverScore(beforeEval, color);
+    const a = moverScore(afterEval, color);
+    const matedAfter = (a.mate != null && a.mate < 0) || (a.mate === 0 && a.lost);
+    const matedBefore = b.mate != null && b.mate < 0;
+    if (matedAfter && !matedBefore) {
+      const prevCp = b.mate != null ? 10000 : b.cp ?? 0;
+      label = worse(label, prevCp < -999 ? 'inaccuracy' : prevCp < -700 ? 'mistake' : 'blunder');
+    }
+    if (b.mate != null && b.mate > 0 && !(a.mate != null && a.mate > 0)) {
+      const cpAfter = matedAfter ? -10000 : a.cp ?? 0;
+      label = worse(label, cpAfter > 999 ? 'inaccuracy' : cpAfter > 700 ? 'mistake' : 'blunder');
+    }
+  }
+  return { label, loss, before, after };
+}
+
+/** Half-moves played before this position, from the FEN's move number (custom starts too). */
+export function plyOf(fen) {
+  const p = fen.split(' ');
+  return ((+p[5] || 1) - 1) * 2 + (p[1] === 'b' ? 1 : 0);
 }
 
 /** Turn raw evaluations into labels, accuracies and per-colour summaries. */
@@ -231,7 +284,7 @@ export function classify(raw, moves, fens, isBookPos = () => false) {
     const l = Math.max(0, before - after);
     loss.push(l);
     acc.push(moveAccuracy(before, after));
-    phases.push(phaseOf(fens[i], i));
+    phases.push(phaseOf(fens[i], plyOf(fens[i])));
     inBook = inBook && i < 30 && isBookPos(fens[i + 1]);
     if (inBook && l < 10) { labels.push('book'); continue; }
     const pos = new Chess(fens[i]);
@@ -240,33 +293,18 @@ export function classify(raw, moves, fens, isBookPos = () => false) {
     const mv = playUci(pos, moves[i]);
     if (nLegal === 1) { labels.push('forced'); continue; }
     const givesMate = pos.isCheckmate();
-    // a move that scores clearly better than the engine's own first choice was at least as good
-    let label = givesMate ? 'best' : labelFor(l, raw.best[i] === moves[i] || after - before >= 1);
+    let { label } = gradeMove(raw.evals[i], raw.evals[i + 1], color, { engineBest: raw.best[i] === moves[i], givesMate });
 
-    // mates, graded like Lichess: allowing a forced mate (or throwing one away) is a blunder
-    // unless the position was already lost (or still overwhelmingly won)
-    const b = moverScore(raw.evals[i], color);
-    const a = moverScore(raw.evals[i + 1], color);
-    const matedAfter = (a.mate != null && a.mate < 0) || (a.mate === 0 && a.lost);
-    const matedBefore = b.mate != null && b.mate < 0;
-    if (matedAfter && !matedBefore) {
-      const prevCp = b.mate != null ? 10000 : b.cp ?? 0;
-      label = worse(label, prevCp < -999 ? 'inaccuracy' : prevCp < -700 ? 'mistake' : 'blunder');
-    }
-    if (b.mate != null && b.mate > 0 && !givesMate && !(a.mate != null && a.mate > 0)) {
-      const cpAfter = matedAfter ? -10000 : a.cp ?? 0;
-      label = worse(label, cpAfter > 999 ? 'inaccuracy' : cpAfter > 700 ? 'mistake' : 'blunder');
-    }
-
-    // great: the only good move. Not for obvious captures or a king escaping check with few options.
-    if (label === 'best' && !givesMate && second[i] && before > 15 && before < 90 && !(inCheck && nLegal <= 3)) {
+    // great: the only good move. Not for obvious captures or a king escaping check with few options,
+    // and never when the "next best" line is the move that was actually played.
+    if (label === 'best' && !givesMate && second[i] && second[i].move !== moves[i] && before > 15 && before < 90 && !(inCheck && nLegal <= 3)) {
       const prevTo = i > 0 ? moves[i - 1].slice(2, 4) : null;
       const takesLastMoved = !!mv.captured && mv.to === prevTo;
       const winningCapture = !!mv.captured && (VALUES[mv.captured] >= VALUES[mv.piece] || !new Chess(fens[i]).attackers(mv.to, color === 'w' ? 'b' : 'w').length);
       if (!takesLastMoved && !winningCapture && before - pov(winPct(second[i]), color) >= 15) label = 'great';
     }
     // brilliant: a sound sacrifice that is also (one of) the best moves, in a position that is not already won
-    if (['best', 'great', 'excellent'].includes(label) && !givesMate && l < 2 && after >= 45 && before < 95 && isSacrifice(fens[i], moves[i])) {
+    if (['best', 'great', 'excellent'].includes(label) && !givesMate && l < 2 && after >= 45 && before < 80 && isSacrifice(fens[i], moves[i], raw.pv[i + 1] || [])) {
       label = 'brilliant';
     }
     // miss: the opponent just erred and this move hands roughly that advantage straight back

@@ -11,13 +11,13 @@ globalThis.fetch = async (url) => {
   return { ok: true, status: 200, json: async () => JSON.parse(fs.readFileSync(p, 'utf8')) };
 };
 
-const { winPct, moveAccuracy, labelFor, gameAccuracy, classify, positions, phaseOf, isSacrifice, analyzePositions } = await import('../js/analysis.js');
+const { winPct, moveAccuracy, labelFor, gameAccuracy, classify, positions, phaseOf, isSacrifice, analyzePositions, gradeMove, plyOf } = await import('../js/analysis.js');
 const { botParams, pickCandidate, LEVELS } = await import('../js/bot.js');
 const { newCard, reviewCard, qualityFor, dueCards } = await import('../js/srs.js');
 const { mergeData, validateImport } = await import('../js/store.js');
 const { dailyStreak } = await import('../js/views/puzzles.js');
 const { updateRating, isCorrect, kFactor } = await import('../js/puzzle-player.js');
-const { explainMove, playOut } = await import('../js/explain.js');
+const { explainMove, playOut, lossText, gainText } = await import('../js/explain.js');
 const { parseInfo, toWhite, formatScore } = await import('../js/engine.js');
 const { formatLine, uciLineToSan, Chess } = await import('../js/chessutil.js');
 const op = await import('../js/openings-data.js');
@@ -360,4 +360,33 @@ test('imports are sanitised and new progress merges', () => {
   assert.deepEqual(m.daily.days, { '2026-10-29': 1, '2026-10-30': 1 });
   assert.deepEqual(m.quiz.best, { mixed: 7, mate: 9 });
   assert.equal(dailyStreak(m.daily.days, new Date(2026, 9, 30)), 2);
+});
+
+test('trades are netted before they are described', () => {
+  const cap = (by, piece) => ({ by, piece });
+  assert.equal(lossText([cap('b', 'q'), cap('w', 'q'), cap('b', 'b'), cap('w', 'b')], 'w'), null, 'equal trades are not a loss');
+  const c2 = [cap('w', 'b'), cap('b', 'n'), cap('b', 'p')];
+  assert.equal(lossText(c2, 'b'), null, 'a bishop for a knight and a pawn is not a loss');
+  assert.equal(gainText(c2, 'b'), 'a pawn', 'a knight for a bishop is an even swap');
+  assert.equal(lossText([cap('b', 'n'), cap('w', 'p')], 'w'), 'a knight for a pawn');
+  assert.equal(lossText([cap('b', 'p'), cap('w', 'p'), cap('b', 'p'), cap('w', 'p')], 'w'), null);
+});
+
+test('sacrifices: only material the move itself offers', () => {
+  // the a3 bishop has been hanging since ...Ba3; a quiet move afterwards is not a sacrifice
+  assert.equal(isSacrifice('rnbqk1nr/pppp1ppp/8/4p3/4P3/b1N2N2/PPPP1PPP/R1BQKB1R b KQkq - 3 3', 'h7h6'), null);
+  const s = isSacrifice('r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 3', 'c4f7');
+  assert.deepEqual(s, { square: 'f7', piece: 'b' });
+  // a piece already hanging counts only when the opponent's best line leaves it alone (poison)
+  const fen = 'rnbqk1nr/pppp1ppp/8/4p3/4P3/b1N2N2/PPPP1PPP/R1BQKB1R b KQkq - 3 3';
+  assert.equal(isSacrifice(fen, 'h7h6', ['b2a3', 'g8f6']), null, 'they simply take it');
+  assert.deepEqual(isSacrifice(fen, 'h7h6', ['d2d4', 'e5d4']), { square: 'a3', piece: 'b' }, 'left alone: poisoned');
+});
+
+test('grading: the engine first choice is never punished by the mate rules', () => {
+  assert.equal(gradeMove({ cp: -3750 }, { mate: -13 }, 'w', { engineBest: true }).label, 'best');
+  assert.equal(gradeMove({ cp: -3750 }, { mate: -13 }, 'w').label, 'inaccuracy');
+  assert.equal(gradeMove({ cp: 50 }, { mate: -3 }, 'w').label, 'blunder');
+  assert.equal(gradeMove({ mate: 6 }, { cp: 800 }, 'w').label, 'mistake', 'throwing away a mate is graded like Lichess');
+  assert.equal(plyOf('8/8/8/8/8/8/8/K6k b - - 0 23'), 45);
 });

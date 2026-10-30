@@ -34,19 +34,33 @@ function wire(root, imp) {
   let site = imp.site;
   const mark = () => root.querySelectorAll('#g-site button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === site)));
   mark();
-  $('#g-site', root).addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { site = b.dataset.v; mark(); } });
   let found = [];
+  let busy = false;
+  let req = 0;
   const fetchBtn = $('#g-fetch', root);
   const out = $('#g-found', root);
+  $('#g-site', root).addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b || b.dataset.v === site) return;
+    site = b.dataset.v;
+    mark();
+    // switching site drops any fetch still running for the other one
+    if (busy) { req++; busy = false; fetchBtn.disabled = false; }
+    found = [];
+    out.innerHTML = '';
+  });
   const go = async () => {
-    const user = $('#g-user', root).value.trim();
-    if (!user) return;
+    const user = $('#g-user', root).value.trim().replace(/^@/, '');
+    if (!user || busy) return;
+    busy = true;
+    const mine = ++req;
     store.set('import.prefs', { site, user });
     fetchBtn.disabled = true;
     out.innerHTML = '<div class="status"><span class="spinner"></span> Fetching your recent games…</div>';
     try {
       const list = await fetchRecentGames(site === 'lichess' ? 'lichess' : 'chesscom', user, 20);
-      found = list.map(g => { try { return { ...g, rec: recordFromPgn(g.pgn, user, { site }) }; } catch { return null; } }).filter(Boolean);
+      if (mine !== req || !out.isConnected) return;
+      found = list.map(g => { try { return { ...g, rec: recordFromPgn(g.pgn, user, { site, date: g.date || null }) }; } catch { return null; } }).filter(Boolean);
       if (!found.length) { out.innerHTML = '<div class="empty small">No standard games found for that player.</div>'; return; }
       out.innerHTML = found.map((g, i) => {
         const r = g.rec;
@@ -55,7 +69,7 @@ function wire(root, imp) {
         return `<div class="list-item">
           <span class="color-dot ${r.userColor}"></span>
           <div class="grow"><div class="t">vs ${esc(r.botName)}${r.botLabel ? ` <span class="muted">(${esc(r.botLabel)})</span>` : ''}</div>
-            <div class="s">${esc(r.opening?.name || 'Unknown opening')} · ${Math.ceil(r.moves.length / 2)} moves · ${esc(g.speed || '')} · ${timeAgo(r.date)}</div></div>
+            <div class="s" style="white-space:normal">${timeAgo(r.date)}${g.speed ? ` · ${esc(g.speed)}` : ''} · ${Math.ceil(r.moves.length / 2)} moves · ${esc(r.opening?.name || 'Unknown opening')}</div></div>
           <span class="result-pill ${r.userResult || 'draw'}">${esc(res)}</span>
           <button class="btn small" type="button" data-review="${i}">${have ? 'Open' : 'Review'}</button>
         </div>`;
@@ -69,7 +83,7 @@ function wire(root, imp) {
     } catch (err) {
       out.innerHTML = `<div class="status bad">${esc(err.message?.includes('fetch') ? 'Could not reach the site. Check your connection.' : err.message)}</div>`;
     } finally {
-      fetchBtn.disabled = false;
+      if (mine === req) { busy = false; fetchBtn.disabled = false; }
     }
   };
   fetchBtn.addEventListener('click', go);
@@ -89,7 +103,7 @@ function row(g) {
   const res = { win: 'Win', loss: 'Loss', draw: 'Draw' }[g.userResult] || (g.spectator ? 'Watched' : g.result);
   const blunders = g.review ? Number(g.review.counts?.[g.userColor]?.blunder) || 0 : null;
   return `<a class="list-item" href="#/review/${encodeURIComponent(g.id)}">
-    <span class="color-dot ${g.userColor}" title="You played ${g.userColor === 'w' ? 'White' : 'Black'}"></span>
+    ${g.spectator ? '<span class="color-dot n" title="A game you watched"></span>' : `<span class="color-dot ${g.userColor}" title="You played ${g.userColor === 'w' ? 'White' : 'Black'}"></span>`}
     <div class="grow">
       <div class="t">${g.spectator ? `${esc(g.whiteName)} vs ${esc(g.blackName)}` : `vs ${esc(g.botName)}`}${!g.spectator && (g.botLabel || g.botElo) ? ` <span class="muted">(${esc(g.botLabel || g.botElo)})</span>` : ''}${g.imported ? ' <span class="tiny muted">· imported</span>' : ''}</div>
       <div class="s">${esc(g.opening?.name || 'Unknown opening')} · ${Math.ceil(g.moves.length / 2)} moves · ${timeAgo(g.date)}</div>

@@ -2,7 +2,7 @@
 import { Board } from '../board.js';
 import { Chess, checkSquare, playUci, uciToMove, colorName, dests, START_FEN } from '../chessutil.js';
 import { getEngine, formatScore, toWhite } from '../engine.js';
-import { positions, analyzePositions, classify, phaseStats, DEPTHS, LABELS, BAD_LABELS, LABEL_TEXT, LABEL_GLYPH, winPct, labelFor } from '../analysis.js';
+import { positions, analyzePositions, classify, phaseStats, DEPTHS, LABELS, BAD_LABELS, LABEL_TEXT, LABEL_GLYPH, winPct, gradeMove } from '../analysis.js';
 import { explainMove } from '../explain.js';
 import { evalGraph } from '../charts.js';
 import * as store from '../store.js';
@@ -11,6 +11,8 @@ import { icons, esc, toast, confirm, $, downloadFile, fmtDate, moveSound, sound 
 import { loadOpenings, isBook } from '../openings-data.js';
 
 const SHOW_IN_LIST = ['brilliant', 'great', 'best', 'book', ...BAD_LABELS];
+// bump when the label rules change: older reviews are re-labelled from their stored engine data
+const REVIEW_VERSION = 3;
 let ctx = null;
 
 export function unmount() { ctx?.destroy(); ctx = null; }
@@ -40,6 +42,8 @@ export async function mount(root, [id], isCurrent = () => true) {
   const fens = positions(game.moves, startFen);
   const sans = game.sans?.length ? game.sans : sansOf(game.moves, startFen);
   const { names, viewer } = sidesOf(game);
+  // in sentences use plain names ("Hazel's queen", not "Hazel (1100)'s queen")
+  const speakNames = { w: names.w.replace(/ \([^)]*\)$/, ''), b: names.b.replace(/ \([^)]*\)$/, '') };
   const user = game.userColor;
   const settings = store.getSettings();
   let cur = -1;
@@ -67,6 +71,7 @@ export async function mount(root, [id], isCurrent = () => true) {
         </div>
       </div>
       <div class="side-col">
+        <section class="card stack hidden" id="progress-card" aria-live="polite"></section>
         <section class="card stack" id="explain" aria-live="polite"></section>
         <section class="card stack" id="summary"></section>
         <section class="card" id="graph-card"><div class="row between"><h3 style="margin:0">Evaluation</h3><span class="tiny muted">tap to jump</span></div><div id="graph" style="margin-top:8px"></div></section>
@@ -137,7 +142,7 @@ export async function mount(root, [id], isCurrent = () => true) {
   function renderExplain() {
     const el = $('#explain', root);
     const r = review();
-    if (!r) return;
+    if (!r) { el.innerHTML = '<p class="muted small" style="margin:0">Move-by-move feedback appears here when the analysis finishes. You can step through the game meanwhile.</p>'; return; }
     if (cur < 0) {
       el.innerHTML = `<div class="explain-head">${icons.start} Start of the game</div>
         <p class="muted small" style="margin:0">Step through the moves with the arrows, tap the graph, or jump straight to the mistakes.</p>
@@ -145,7 +150,7 @@ export async function mount(root, [id], isCurrent = () => true) {
       $('#x-next-mistake', el).addEventListener('click', nextMistake);
       return;
     }
-    const ex = explainMove(cur, { fens, moves: game.moves, sans, review: r, viewer, names });
+    const ex = explainMove(cur, { fens, moves: game.moves, sans, review: r, viewer, names: speakNames });
     const lab = r.labels[cur];
     const canRetry = BAD_LABELS.includes(lab) && isMine(cur) && r.best[cur];
     el.innerHTML = `
@@ -215,12 +220,16 @@ export async function mount(root, [id], isCurrent = () => true) {
           depth: r.depth || DEPTHS.standard, movetime: 4000, startFen, moves: [...game.moves.slice(0, i), uci],
         });
         if (!retry || token !== retry.token || !alive) return;
-        if (!res) { status('The engine is not available right now.', 'bad'); return; }
+        if (!res?.lines[0]) {
+          status('The engine is not available right now. Try again in a moment.', 'bad');
+          const c2 = new Chess(fens[i]);
+          board.setPosition(fens[i], { lastMove: null, check: checkSquare(c2) });
+          board.setMovable({ color: colorName(mover(i)), dests: dests(c2) });
+          return;
+        }
         score = toWhite(res.lines[0], after.turn());
       }
-      const pov = (w) => (mover(i) === 'w' ? w : 100 - w);
-      const loss = Math.max(0, pov(winPct(r.evals[i])) - pov(winPct(score)));
-      label = labelFor(loss, false);
+      label = gradeMove(r.evals[i], score, mover(i), { givesMate: after.isCheckmate() }).label;
       renderEval(score);
     }
     const good = !BAD_LABELS.includes(label);
@@ -335,9 +344,13 @@ export async function mount(root, [id], isCurrent = () => true) {
     });
     $('#i-dl', el).addEventListener('click', () => downloadFile(`kibitz-${game.id}.pgn`, pgnOf(game), 'application/x-chess-pgn'));
     $('#i-deep', el).addEventListener('click', () => { if (!analysing) runAnalysis(DEPTHS.deep); });
-    $('#i-play', el).addEventListener('click', () => playFromPosition(fens[cur + 1]));
+    $('#i-play', el).addEventListener('click', async () => {
+      if ((await playFromPosition(fens[cur + 1])) === 'over') toast('The game is over in this position');
+    });
     $('#i-analyse', el).addEventListener('click', () => {
-      store.set('analysis.board', { startFen, line: game.moves.slice(), headers: null, orientation: colorName(user) });
+      const result = game.result && game.result !== '*' ? game.result : undefined;
+      const white = game.imported ? game.whiteName : names.w, black = game.imported ? game.blackName : names.b;
+      store.set('analysis.board', { startFen, line: game.moves.slice(), ply: cur + 1, headers: { White: white, Black: black, Result: result }, orientation: colorName(user) });
       location.hash = '#/analysis';
     });
     $('#i-del', el).addEventListener('click', async () => {
@@ -353,7 +366,9 @@ export async function mount(root, [id], isCurrent = () => true) {
     const run = ++runId;
     analysing = true;
     setBusy(true);
-    const el = $('#explain', root);
+    // progress gets its own panel so stepping through moves meanwhile does not remove it
+    const el = $('#progress-card', root);
+    el.classList.remove('hidden');
     el.innerHTML = `
       <div class="explain-head"><span class="spinner"></span> Analysing the game</div>
       <p class="muted small" style="margin:0">Stockfish is checking every position at depth ${depth}. This runs on your device and usually takes under a minute.</p>
@@ -375,14 +390,17 @@ export async function mount(root, [id], isCurrent = () => true) {
     analysing = false;
     setBusy(false);
     if (!raw) {
-      el.innerHTML = `<div class="status bad">${icons.x} The engine stopped before the review finished. This can happen on phones that are low on memory.</div>
+      el.innerHTML = eng.failed
+        ? `<div class="status bad">${icons.x} The chess engine could not be restarted on this device. Reload the page to try again.</div>`
+        : `<div class="status bad">${icons.x} The engine stopped before the review finished. This can happen on phones that are low on memory.</div>
         <button class="btn primary" id="x-again" type="button">${icons.retry} Try again</button>`;
-      $('#x-again', el).addEventListener('click', () => runAnalysis(depth));
+      $('#x-again', el)?.addEventListener('click', () => runAnalysis(depth));
       return;
     }
+    el.classList.add('hidden');
     const cls = classify(raw, game.moves, fens, isBook);
     game.review = {
-      v: 2, depth, date: Date.now(),
+      v: REVIEW_VERSION, depth, date: Date.now(),
       evals: raw.evals, best: raw.best, pv: raw.pv, second: raw.second,
       labels: cls.labels, acc: cls.acc.map(a => Math.round(a * 10) / 10), loss: cls.loss.map(a => Math.round(a * 10) / 10),
       phases: cls.phases, accuracy: cls.accuracy, counts: cls.counts,
@@ -431,7 +449,15 @@ export async function mount(root, [id], isCurrent = () => true) {
   go(-1);
   // reviews made before the second-best line was stored are redone so new labels can appear
   if (!game.review || !game.review.second) await runAnalysis(DEPTHS[settings.reviewDepth] || DEPTHS.standard);
-  else renderAll();
+  else {
+    if ((game.review.v || 0) < REVIEW_VERSION) {
+      const r = game.review;
+      const cls = classify({ evals: r.evals, best: r.best, pv: r.pv, second: r.second }, game.moves, fens, isBook);
+      game.review = { ...r, v: REVIEW_VERSION, labels: cls.labels, acc: cls.acc.map(a => Math.round(a * 10) / 10), loss: cls.loss.map(a => Math.round(a * 10) / 10), phases: cls.phases, accuracy: cls.accuracy, counts: cls.counts };
+      store.set('game:' + game.id, game);
+    }
+    renderAll();
+  }
 }
 
 function sansOf(moves, startFen = START_FEN) {

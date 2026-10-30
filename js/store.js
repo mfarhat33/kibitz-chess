@@ -126,7 +126,7 @@ const str = (v, max = 200) => (typeof v === 'string' ? v.slice(0, max) : '');
 const UCI = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 const ucis = (a) => (Array.isArray(a) ? a.filter(u => typeof u === 'string' && UCI.test(u)).slice(0, 1000) : []);
 const strs = (a, max = 60) => (Array.isArray(a) ? a.filter(x => typeof x === 'string').map(x => x.slice(0, max)).slice(0, 2000) : []);
-const LABEL_SET = new Set(['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'inaccuracy', 'miss', 'mistake', 'blunder']);
+const LABEL_SET = new Set(['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'forced', 'inaccuracy', 'miss', 'mistake', 'blunder']);
 const score = (e) => (e && typeof e === 'object' ? { cp: e.cp == null ? null : num(e.cp), mate: e.mate == null ? null : num(e.mate), ...(e.win === 'w' || e.win === 'b' ? { win: e.win } : {}) } : { cp: 0, mate: null });
 
 function cleanReview(r, n) {

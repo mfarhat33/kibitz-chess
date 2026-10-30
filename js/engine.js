@@ -114,6 +114,9 @@ export class Engine {
       this.send('ucinewgame');
       this.send('isready');
       this.job = job;
+      // a worker that never answers isready would block every later search
+      clearTimeout(this.watchdog);
+      this.watchdog = setTimeout(() => { if (this.job === job) this.restart(); }, 5000);
       return;
     }
     this.job = job;
@@ -151,7 +154,7 @@ export class Engine {
     const job = this.job;
     if (!job) return;
     if (job.special) {
-      if (line === 'readyok') { this.job = null; this.pump(); }
+      if (line === 'readyok') { clearTimeout(this.watchdog); this.job = null; this.pump(); }
       return;
     }
     if (line.startsWith('info') && line.includes(' pv ')) {
@@ -166,6 +169,7 @@ export class Engine {
         lines: job.lines.filter(Boolean),
       };
       clearTimeout(this.watchdog);
+      this.restarts = 0; // a completed search proves the worker is healthy again
       this.job = null;
       job.resolve(result);
       this.pump();

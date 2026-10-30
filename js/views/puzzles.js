@@ -71,7 +71,7 @@ async function dailyView(root, isCurrent) {
       </div>
     </div>`;
   const board = new Board($('#board', root), { coordinates: settings.coords, animate: settings.animation });
-  let failed = false;
+  let failed = d.days[key] === 0; // failing today's puzzle sticks, even after a reload
   const status = (msg, cls = 'info') => { const s = $('#p-status', root); s.className = 'status ' + cls; s.innerHTML = msg; };
   const save = (ok) => {
     const dd = { days: {}, ...store.get('daily', {}) };
