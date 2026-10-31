@@ -144,8 +144,6 @@ function gameView(root, state) {
         <div class="player-bar" id="bar-top"></div>
         <div class="board-shell"><div id="board"></div></div>
         <div class="player-bar" id="bar-bottom"></div>
-        <div class="moves-inline mobile-only" id="moves-m" aria-label="Moves"></div>
-        <div class="tiny muted mobile-only" id="opening-m" style="padding:0 16px;min-height:1.2em"></div>
       </div>
       <div class="side-col">
         <div class="status" id="status" role="status"></div>
@@ -156,6 +154,11 @@ function gameView(root, state) {
           <button class="btn" id="b-resign" type="button">${icons.flag}<span>Resign</span></button>
         </div>
         <section class="card stack hidden" id="after"></section>
+        <!-- phones: the move list sits below the buttons so the controls stay right under the board -->
+        <div class="mobile-only" style="margin:0 -16px">
+          <div class="moves-inline" id="moves-m" aria-label="Moves"></div>
+          <div class="tiny muted" id="opening-m" style="padding:0 16px;min-height:1.2em"></div>
+        </div>
         <section class="card desktop-only">
           <div class="row between"><h3 style="margin:0">Moves</h3><span class="tiny muted" id="opening"></span></div>
           <div class="moves" id="moves" style="margin-top:8px"></div>
@@ -328,7 +331,7 @@ function gameView(root, state) {
     save();
     render();
     if (chess.turn() === bot) botTurn();
-    else if (pending) setTimeout(() => playPremove(pending), 40);
+    else if (pending) playPremove(pending); // in the same frame as the bot's move, so nothing flickers
     return true;
   }
 
@@ -528,29 +531,37 @@ function gameView(root, state) {
 }
 
 /**
- * Squares `color` could premove to while the opponent is thinking: its moves as if it were its turn,
- * plus pawn captures onto empty squares (a piece may land there).
+ * Squares `color` could premove to while the opponent is thinking. Like chess.com, this is geometric:
+ * every square a piece could reach if the board changed (recaptures onto your own piece, pinned pieces,
+ * lines through pieces that may move, castling). Illegal premoves are simply dropped when they come up.
  */
 export function premoveDests(chess, color) {
   const map = new Map();
-  const parts = chess.fen().split(' ');
-  parts[1] = color;
-  parts[3] = '-';
-  let c;
-  try { c = new Chess(parts.join(' ')); } catch { return map; }
   const add = (from, to) => { if (!map.has(from)) map.set(from, []); if (!map.get(from).includes(to)) map.get(from).push(to); };
-  try { for (const m of c.moves({ verbose: true })) add(m.from, m.to); } catch { /* unusual position: plain moves only */ }
-  const dir = color === 'w' ? 1 : -1;
-  for (const row of c.board()) for (const p of row) {
-    if (!p || p.type !== 'p' || p.color !== color) continue;
-    const f = p.square.charCodeAt(0), r = +p.square[1] + dir;
-    if (r < 1 || r > 8) continue;
-    for (const df of [-1, 1]) {
-      const nf = f + df;
-      if (nf < 97 || nf > 104) continue;
-      const to = String.fromCharCode(nf) + r;
-      const occ = c.get(to);
-      if (!occ || occ.color !== color) add(p.square, to);
+  const name = (f, r) => String.fromCharCode(97 + f) + (r + 1);
+  const castling = chess.fen().split(' ')[2] || '';
+  const diag = [[1, 1], [1, -1], [-1, 1], [-1, -1]], orth = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  for (const row of chess.board()) for (const p of row) {
+    if (!p || p.color !== color) continue;
+    const f = p.square.charCodeAt(0) - 97, r = +p.square[1] - 1;
+    const step = (df, dr) => { const nf = f + df, nr = r + dr; if (nf >= 0 && nf < 8 && nr >= 0 && nr < 8) add(p.square, name(nf, nr)); };
+    if (p.type === 'p') {
+      const dir = color === 'w' ? 1 : -1;
+      step(0, dir);
+      if (r === (color === 'w' ? 1 : 6)) step(0, 2 * dir);
+      step(-1, dir); step(1, dir);
+    } else if (p.type === 'n') {
+      for (const [a, b] of [[1, 2], [2, 1], [-1, 2], [-2, 1], [1, -2], [2, -1], [-1, -2], [-2, -1]]) step(a, b);
+    } else if (p.type === 'k') {
+      for (const [a, b] of [...diag, ...orth]) step(a, b);
+      const home = color === 'w' ? 0 : 7;
+      if (r === home && f === 4) {
+        if (castling.includes(color === 'w' ? 'K' : 'k')) add(p.square, name(6, home));
+        if (castling.includes(color === 'w' ? 'Q' : 'q')) add(p.square, name(2, home));
+      }
+    } else {
+      const dirs = p.type === 'b' ? diag : p.type === 'r' ? orth : [...diag, ...orth];
+      for (const [a, b] of dirs) for (let k = 1; k < 8; k++) step(a * k, b * k);
     }
   }
   return map;

@@ -173,8 +173,12 @@ function lessonView(root, id) {
       const san = legal.san;
       if (!s.strict) {
         busy = true;
+        // show the move while Stockfish checks it, and lock the board meanwhile
+        board.setPosition(test.fen(), { lastMove: [from, to], check: checkSquare(test) });
+        board.setMovable({});
         status('<span class="spinner"></span> Checking your move…');
         const before = chess.fen();
+        const lessonSan = uciLineToSan(before, [s.line[ply]])[0];
         const r1 = await engine.analyze(before, { depth: 14, multipv: 1 });
         const r2 = await engine.analyze(test.fen(), { depth: 14, multipv: 1 });
         busy = false;
@@ -187,7 +191,7 @@ function lessonView(root, id) {
           if (good) {
             play(uci);
             render();
-            success(`${esc(san)} works too! The lesson move was ${esc(uciLineToSan(before, [s.line[ply]])[0])}. `);
+            success(`${esc(san)} works too! The lesson move was ${esc(lessonSan)}. `);
             return;
           }
         }

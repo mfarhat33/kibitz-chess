@@ -45,6 +45,14 @@ export const icons = {
 
 export const logo = `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 3h20a4 4 0 0 1 4 4v14a4 4 0 0 1-4 4H14l-6 5v-5H6a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4z" fill="var(--accent)"/><rect x="9" y="7" width="7" height="7" rx="1.2" fill="var(--accent-ink)"/><rect x="16" y="14" width="7" height="7" rx="1.2" fill="var(--accent-ink)"/><rect x="16" y="7" width="7" height="7" rx="1.2" fill="var(--accent-ink)" opacity=".4"/><rect x="9" y="14" width="7" height="7" rx="1.2" fill="var(--accent-ink)" opacity=".4"/></svg>`;
 
+/** Scrolls so a board column sits just below the sticky header (phones put buttons below the board). */
+export function scrollToBoard(root) {
+  const col = root.querySelector('.board-col');
+  if (!col) return;
+  const top = col.getBoundingClientRect().top + window.scrollY - (document.querySelector('.topbar')?.offsetHeight || 0) - 4;
+  if (Math.abs(window.scrollY - top) > 4 && col.getBoundingClientRect().top < 0) window.scrollTo({ top, behavior: 'smooth' });
+}
+
 export function toast(msg, ms = 2400) {
   const t = $('#toast');
   if (!t) return;

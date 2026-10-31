@@ -7,7 +7,7 @@ import { explainMove } from '../explain.js';
 import { evalGraph } from '../charts.js';
 import * as store from '../store.js';
 import { playTabs, playFromPosition } from './tabs.js';
-import { icons, esc, toast, confirm, $, downloadFile, fmtDate, moveSound, sound } from '../ui.js';
+import { icons, esc, toast, confirm, $, downloadFile, fmtDate, moveSound, sound, scrollToBoard } from '../ui.js';
 import { loadOpenings, isBook } from '../openings-data.js';
 
 const SHOW_IN_LIST = ['brilliant', 'great', 'best', 'book', ...BAD_LABELS];
@@ -190,6 +190,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     });
     $('#x-back', el).addEventListener('click', () => exitRetry(true));
     board.opts.onMove = (from, to, promo) => retryMove(from, to, promo);
+    scrollToBoard(root);
   }
 
   async function retryMove(from, to, promo) {

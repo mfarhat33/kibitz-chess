@@ -289,6 +289,14 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 .kb-board.animate .kb-piece { transition: transform .2s cubic-bezier(.25, .8, .3, 1); }
 .kb-piece.snap { transition: none !important; }
+.kb-float { position: fixed; inset: 0; pointer-events: none; z-index: 60; overflow: visible; }
+.kb-float .kb-piece { position: absolute; left: 0; top: 0; background-size: 100% 100%; will-change: transform; }
+.kb-board .kb-piece.fade { transition: opacity .16s .12s; opacity: 0; }
+.kb-sq.hover.touch { box-shadow: none; }
+.kb-sq.hover.touch::before {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 220%; height: 220%;
+  transform: translate(-50%, -50%); border-radius: 50%; background: rgba(255, 255, 255, .28);
+}
 .kb-piece.ghost { opacity: .32; pointer-events: none; transition: none !important; }
 .kb-sq.premove { background: rgba(214, 51, 108, .38); }
 .kb-sq.dest.castle::after { border-style: dashed; }
@@ -568,3 +576,16 @@ a.icon-btn { color: var(--text); }
 :root:not([data-theme="dark"]) .tq-book { color: #7d6045; }
 :root:not([data-theme="dark"]) .tq-miss { color: #a61e4d; }
 .tq-miss { color: var(--q-miss); }
+
+/* phones: keep the board within the screen height so the controls stay reachable */
+@media (max-width: 899px) {
+  .stage > .board-col .board-shell { width: min(100%, calc(100dvh - var(--top-h) - var(--nav-h) - 180px)); margin-inline: auto; }
+}
+/* phone held sideways: board and panel side by side, board sized to the height */
+@media (max-width: 899px) and (orientation: landscape) and (max-height: 600px) {
+  .stage { grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 12px; }
+  .stage > .board-col { width: calc(100dvh - var(--top-h) - var(--nav-h) - 12px); }
+  .stage > .board-col .board-shell { width: 100%; }
+  .stage > .side-col { padding: 8px 12px 0 0; }
+  .evalbar-h { margin: 0 0 6px; }
+}

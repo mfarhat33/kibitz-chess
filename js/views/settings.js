@@ -38,6 +38,7 @@ export function mount(root) {
         </div>
         <label class="toggle"><span>Show coordinates</span><input type="checkbox" id="s-coords" ${s.coords ? 'checked' : ''}></label>
         <label class="toggle"><span>Animate pieces</span><input type="checkbox" id="s-anim" ${s.animation ? 'checked' : ''}></label>
+        <label class="toggle"><span>Always promote to a queen</span><input type="checkbox" id="s-autoq" ${s.autoQueen ? 'checked' : ''}></label>
         <label class="toggle"><span>Move sounds</span><input type="checkbox" id="s-sound" ${s.sound ? 'checked' : ''}></label>
       </section>
       <section class="card stack">
@@ -86,6 +87,7 @@ export function mount(root) {
   }
   $('#s-coords', root).addEventListener('change', (e) => store.setSettings({ coords: e.target.checked }));
   $('#s-anim', root).addEventListener('change', (e) => store.setSettings({ animation: e.target.checked }));
+  $('#s-autoq', root).addEventListener('change', (e) => { store.setSettings({ autoQueen: e.target.checked }); applyTheme(); });
   $('#s-sound', root).addEventListener('change', (e) => store.setSettings({ sound: e.target.checked }));
 
   $('#s-export', root).addEventListener('click', () => {
