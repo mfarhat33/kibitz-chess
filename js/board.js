@@ -1,5 +1,7 @@
 // Interactive chessboard. Tap a piece then a square, or drag it. Pointer events cover mouse and touch.
 // The board never decides legality itself: callers pass `dests` (from -> [to]) and get onMove(from, to, promo).
+// Castling also works by moving the king onto its own rook. While it is not your turn, callers can
+// allow premoves with setPremovable(); the chosen premove is kept in `board.premove`.
 
 const PROMO_ORDER = ['q', 'n', 'r', 'b'];
 
@@ -55,6 +57,11 @@ export class Board {
     this.drag = null;
     this.version = 0;
     this.animate = opts.animate !== false;
+    this.premovable = { color: null, dests: new Map() };
+    this.premove = null;
+    this.snapSq = null;
+    this.ghost = null;
+    this.raf = 0;
 
     el.classList.add('kb-board');
     el.innerHTML = '';
@@ -90,6 +97,7 @@ export class Board {
   }
 
   destroy() {
+    if (this.raf) cancelAnimationFrame(this.raf);
     this.el.removeEventListener('pointerdown', this.onDown);
     this.el.removeEventListener('pointermove', this.onPointerMove);
     this.el.removeEventListener('pointerup', this.onUp);
@@ -132,24 +140,52 @@ export class Board {
         e.dataset.p = p;
         this.pieceLayer.appendChild(e);
       }
-      e.classList.remove('dragging');
+      if (e !== this.drag?.el) e.classList.remove('dragging');
       placed.set(sq, e);
     }
+    // a piece that was just dropped by hand lands at once instead of sliding from the pointer
+    if (this.snapSq && placed.get(this.snapSq)) {
+      const e = placed.get(this.snapSq);
+      e.classList.add('snap');
+      requestAnimationFrame(() => requestAnimationFrame(() => e.classList.remove('snap')));
+    }
+    this.snapSq = null;
     for (const e of old.values()) {
       if (doAnim) { e.classList.add('fade'); setTimeout(() => e.remove(), 200); }
       else e.remove();
     }
     this.els = placed;
     this.pieces = next;
-    for (const [sq, e] of placed) this.placeEl(e, sq);
+    // the piece in the player's hand stays under the pointer (e.g. the bot moved during a premove drag)
+    for (const [sq, e] of placed) if (!(this.drag?.started && e === this.drag.el)) this.placeEl(e, sq);
     if (this.selected && !this.pieces.has(this.selected)) this.selected = null;
     this.renderSquares();
   }
 
   setMovable({ color = null, dests = new Map() } = {}) {
     this.movable = { color, dests };
-    if (this.selected && !dests.has(this.selected)) this.selected = null;
+    if (this.selected && !this.activeDests().has(this.selected)) this.selected = null;
     this.renderSquares();
+  }
+
+  /** Allow premoves for `color` with these (pseudo-legal) destinations while it is not that side's turn. */
+  setPremovable({ color = null, dests = new Map() } = {}) {
+    this.premovable = { color, dests };
+    if (!color) this.premove = null;
+    this.renderSquares();
+  }
+
+  setPremove(pm) {
+    this.premove = pm;
+    this.renderSquares();
+  }
+
+  premoveMode() {
+    return !this.movable.color && !!this.premovable.color;
+  }
+
+  activeDests() {
+    return this.premoveMode() ? this.premovable.dests : this.movable.dests;
   }
 
   setOrientation(o) {
@@ -178,7 +214,7 @@ export class Board {
   // ---------- rendering ----------
   placeEl(e, sq) {
     const [x, y] = sqToXY(sq, this.orientation);
-    e.style.transform = `translate(${x * 100}%, ${y * 100}%)`;
+    e.style.transform = `translate3d(${x * 100}%, ${y * 100}%, 0)`;
   }
 
   sqStyle(sq) {
@@ -207,13 +243,16 @@ export class Board {
     const cls = new Map();
     const add = (sq, c) => { if (sq) cls.set(sq, (cls.get(sq) || '') + ' ' + c); };
     if (this.lastMove) { add(this.lastMove[0], 'last'); add(this.lastMove[1], 'last'); }
+    if (this.premove) { add(this.premove.from, 'premove'); add(this.premove.to, 'premove'); }
     for (const m of this.marks) add(m.sq, m.cls);
     if (this.check) add(this.check, 'check');
     if (this.selected) {
       add(this.selected, 'sel');
-      for (const d of this.movable.dests.get(this.selected) || []) {
+      for (const d of this.activeDests().get(this.selected) || []) {
         add(d, this.pieces.has(d) ? 'dest cap' : 'dest');
       }
+      // when the king can castle, its rook is a target too (drop the king on it to castle)
+      for (const rookSq of this.castleRooks(this.selected)) add(rookSq, 'dest cap castle');
     }
     if (this.hover && this.drag?.started) add(this.hover, 'hover');
     for (const c of this.userCircles) add(c, 'mark-circle');
@@ -255,11 +294,42 @@ export class Board {
   }
 
   canMove(from, to) {
-    return (this.movable.dests.get(from) || []).includes(to);
+    return (this.activeDests().get(from) || []).includes(to);
+  }
+
+  /**
+   * The real destination for a move attempt from -> to, or null. Handles castling by moving the king
+   * onto its own rook (it castles towards that rook), as well as the usual two-square king move.
+   */
+  resolveDest(from, to) {
+    if (!from || !to || from === to) return null;
+    if (this.canMove(from, to)) return to;
+    const piece = this.pieces.get(from);
+    if (piece?.[1] === 'K' && this.pieces.get(to) === piece[0] + 'R' && from[1] === to[1]) {
+      const dest = (to > from ? 'g' : 'c') + from[1];
+      if (this.canMove(from, dest)) return dest;
+    }
+    return null;
+  }
+
+  /** Rook squares the selected king could be dropped on to castle. */
+  castleRooks(sq) {
+    const piece = this.pieces.get(sq);
+    if (piece?.[1] !== 'K') return [];
+    const out = [];
+    for (const d of this.activeDests().get(sq) || []) {
+      if (d[1] !== sq[1] || Math.abs(d.charCodeAt(0) - sq.charCodeAt(0)) !== 2) continue;
+      const step = d > sq ? 1 : -1;
+      for (let f = d.charCodeAt(0) + step; f >= 97 && f <= 104; f += step) {
+        const rs = String.fromCharCode(f) + sq[1];
+        if (this.pieces.get(rs) === piece[0] + 'R') { out.push(rs); break; }
+      }
+    }
+    return out;
   }
 
   isMine(piece) {
-    const c = this.movable.color;
+    const c = this.movable.color || this.premovable.color;
     if (!c || !piece) return false;
     return c === 'both' || (piece[0] === 'w') === (c === 'white');
   }
@@ -272,27 +342,33 @@ export class Board {
   onDown(e) {
     if (this.promoEl) return;
     const sq = this.squareAt(e.clientX, e.clientY);
-    if (e.button === 2) { this.rightStart = sq; return; }
+    if (e.button === 2) {
+      this.rightStart = sq;
+      if (this.premove) this.cancelPremove();
+      return;
+    }
     if (e.button !== 0) return;
     if (this.userArrows.length || this.userCircles.length) this.clearUserDrawings();
     if (!sq) return;
     e.preventDefault();
     if (this.opts.onSquare) { this.opts.onSquare(sq); return; }
-    if (this.selected && this.selected !== sq && this.canMove(this.selected, sq)) {
-      this.tryMove(this.selected, sq);
-      return;
+    if (this.selected && this.selected !== sq) {
+      const dest = this.resolveDest(this.selected, sq);
+      if (dest) { this.tryMove(this.selected, dest); return; }
     }
     const piece = this.pieces.get(sq);
-    if (piece && this.isMine(piece) && this.movable.dests.has(sq)) {
+    if (piece && this.isMine(piece) && this.activeDests().has(sq)) {
       const wasSelected = this.selected === sq;
       this.select(sq);
       const r = this.el.getBoundingClientRect();
       this.drag = {
-        sq, el: this.els.get(sq), started: false, wasSelected,
-        x0: e.clientX, y0: e.clientY, touch: e.pointerType !== 'mouse', size: r.width / 8,
+        sq, el: this.els.get(sq), piece, started: false, wasSelected,
+        x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
+        touch: e.pointerType !== 'mouse', size: r.width / 8, rect: r,
       };
       try { this.el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     } else {
+      if (this.premove && !this.selected) this.cancelPremove();
       this.select(null);
     }
   }
@@ -300,20 +376,42 @@ export class Board {
   onPointerMove(e) {
     const d = this.drag;
     if (!d) return;
-    const dist = Math.hypot(e.clientX - d.x0, e.clientY - d.y0);
-    if (!d.started && dist < (d.touch ? 7 : 3)) return;
+    d.x = e.clientX;
+    d.y = e.clientY;
+    if (!d.started && Math.hypot(d.x - d.x0, d.y - d.y0) < (d.touch ? 7 : 3)) return;
     if (!d.started) {
       d.started = true;
+      d.rect = this.el.getBoundingClientRect();
       d.el.classList.add('dragging');
       this.el.classList.remove('animate');
+      // a faded copy stays on the starting square while the piece is in the air
+      this.ghost = document.createElement('div');
+      this.ghost.className = `kb-piece ${d.piece} ghost`;
+      this.placeEl(this.ghost, d.sq);
+      this.pieceLayer.insertBefore(this.ghost, this.pieceLayer.firstChild);
     }
-    const r = this.el.getBoundingClientRect();
+    // draw once per frame, however many pointer events arrive
+    if (!this.raf) this.raf = requestAnimationFrame(() => this.drawDrag());
+  }
+
+  drawDrag() {
+    this.raf = 0;
+    const d = this.drag;
+    if (!d?.started) return;
+    const r = d.rect;
     const lift = d.touch ? d.size * 0.45 : 0;
-    const px = e.clientX - r.left - d.size / 2;
-    const py = e.clientY - r.top - d.size / 2 - lift;
-    d.el.style.transform = `translate(${px}px, ${py}px) scale(${d.touch ? 1.25 : 1.06})`;
-    const over = this.squareAt(e.clientX, e.clientY - lift);
+    const px = d.x - r.left - d.size / 2;
+    const py = d.y - r.top - d.size / 2 - lift;
+    d.el.style.transform = `translate3d(${px}px, ${py}px, 0) scale(${d.touch ? 1.25 : 1.06})`;
+    const over = this.squareAt(d.x, d.y - lift);
     if (over !== this.hover) { this.hover = over; this.renderSquares(); }
+  }
+
+  endDrag() {
+    if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; }
+    this.ghost?.remove();
+    this.ghost = null;
+    this.hover = null;
   }
 
   onUp(e) {
@@ -339,11 +437,20 @@ export class Board {
     if (d.started) {
       const lift = d.touch ? d.size * 0.45 : 0;
       const to = this.squareAt(e.clientX, e.clientY - lift);
-      this.hover = null;
+      this.endDrag();
       d.el.classList.remove('dragging');
-      if (to && to !== d.sq && this.canMove(d.sq, to)) {
-        this.tryMove(d.sq, to);
+      const dest = to && to !== d.sq ? this.resolveDest(d.sq, to) : null;
+      if (dest) {
+        // dropped on its square: land there at once (a king dropped on its rook still slides to castle)
+        if (dest === to) {
+          this.placeEl(d.el, dest);
+          this.snapSq = dest;
+          d.el.classList.add('snap');
+          requestAnimationFrame(() => requestAnimationFrame(() => d.el.classList.remove('snap')));
+        }
+        this.tryMove(d.sq, dest);
       } else {
+        // not a legal square: glide back
         this.el.classList.add('animate');
         this.placeEl(d.el, d.sq);
         if (to !== d.sq) this.select(null); else this.renderSquares();
@@ -356,14 +463,32 @@ export class Board {
   onCancel() {
     const d = this.drag;
     this.drag = null;
-    this.hover = null;
+    this.endDrag();
     if (d) { d.el.classList.remove('dragging'); this.placeEl(d.el, d.sq); }
     this.renderSquares();
   }
 
+  cancelPremove() {
+    this.premove = null;
+    this.renderSquares();
+    this.opts.onPremove?.(null);
+  }
+
   tryMove(from, to) {
     const piece = this.pieces.get(from);
-    if (piece && piece[1] === 'P' && (to[1] === '8' || to[1] === '1')) {
+    const promotes = piece && piece[1] === 'P' && (to[1] === '8' || to[1] === '1');
+    if (this.premoveMode()) {
+      // premoves always promote to a queen
+      this.select(null);
+      this.snapSq = null;
+      this.el.classList.add('animate');
+      for (const [sq, e] of this.els) this.placeEl(e, sq);
+      this.premove = { from, to, promo: promotes ? 'q' : undefined };
+      this.renderSquares();
+      this.opts.onPremove?.(this.premove);
+      return;
+    }
+    if (promotes) {
       this.openPromo(from, to, piece[0]);
       return;
     }
@@ -374,8 +499,12 @@ export class Board {
     const v = this.version;
     this.select(null);
     this.opts.onMove?.(from, to, promo);
-    // caller rejected or deferred the move: put the piece back
-    if (this.version === v) for (const [sq, e] of this.els) this.placeEl(e, sq);
+    // caller rejected or deferred the move: put the pieces back
+    if (this.version === v) {
+      this.snapSq = null;
+      this.el.classList.add('animate');
+      for (const [sq, e] of this.els) this.placeEl(e, sq);
+    }
   }
 
   openPromo(from, to, color) {

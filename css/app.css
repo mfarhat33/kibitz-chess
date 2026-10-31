@@ -287,7 +287,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   position: absolute; left: 0; top: 0; width: 12.5%; height: 12.5%;
   background-size: 100% 100%; will-change: transform;
 }
-.kb-board.animate .kb-piece { transition: transform .18s cubic-bezier(.3, .7, .35, 1); }
+.kb-board.animate .kb-piece { transition: transform .2s cubic-bezier(.25, .8, .3, 1); }
+.kb-piece.snap { transition: none !important; }
+.kb-piece.ghost { opacity: .32; pointer-events: none; transition: none !important; }
+.kb-sq.premove { background: rgba(214, 51, 108, .38); }
+.kb-sq.dest.castle::after { border-style: dashed; }
 .kb-piece.dragging { z-index: 10; transition: none !important; transform-origin: 50% 50%; filter: drop-shadow(0 6px 8px rgba(0, 0, 0, .35)); }
 .kb-piece.ghost { opacity: .3; }
 .kb-piece.fade { transition: opacity .18s; opacity: 0; }

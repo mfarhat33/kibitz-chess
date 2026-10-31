@@ -292,6 +292,8 @@ function gameView(root, state) {
     board.setPosition(chess.fen(), { lastMove, check: checkSquare(chess), animate });
     const mine = !state.over && chess.turn() === user;
     board.setMovable({ color: mine ? colorName(user) : null, dests: mine ? dests(chess) : new Map() });
+    // while the bot thinks you can queue a premove
+    board.setPremovable(!state.over && !mine ? { color: colorName(user), dests: premoveDests(chess, user) } : {});
     board.setArrows(hintArrow ? [hintArrow] : []);
     renderBars();
     renderMoves();
@@ -307,6 +309,7 @@ function gameView(root, state) {
 
   function applyMove(uci) {
     const color = chess.turn();
+    const pending = color === bot ? board.premove : null;
     const m = playUci(chess, uci);
     if (!m) return false;
     charge(color);
@@ -325,7 +328,15 @@ function gameView(root, state) {
     save();
     render();
     if (chess.turn() === bot) botTurn();
+    else if (pending) setTimeout(() => playPremove(pending), 40);
     return true;
+  }
+
+  // a queued premove is played straight away if it is legal in the new position, otherwise dropped
+  function playPremove(pm) {
+    if (!alive || state.over || chess.turn() !== user) return;
+    const legal = chess.moves({ verbose: true }).find(x => x.from === pm.from && x.to === pm.to && (!x.promotion || x.promotion === (pm.promo || 'q')));
+    if (legal) userMove(pm.from, pm.to, legal.promotion);
   }
 
   function userMove(from, to, promo) {
@@ -514,6 +525,35 @@ function gameView(root, state) {
     setStatus();
     if (!state.over && chess.turn() === bot && !thinking) botTurn();
   }).catch(() => { engineState = 'error'; setStatus(); });
+}
+
+/**
+ * Squares `color` could premove to while the opponent is thinking: its moves as if it were its turn,
+ * plus pawn captures onto empty squares (a piece may land there).
+ */
+export function premoveDests(chess, color) {
+  const map = new Map();
+  const parts = chess.fen().split(' ');
+  parts[1] = color;
+  parts[3] = '-';
+  let c;
+  try { c = new Chess(parts.join(' ')); } catch { return map; }
+  const add = (from, to) => { if (!map.has(from)) map.set(from, []); if (!map.get(from).includes(to)) map.get(from).push(to); };
+  try { for (const m of c.moves({ verbose: true })) add(m.from, m.to); } catch { /* unusual position: plain moves only */ }
+  const dir = color === 'w' ? 1 : -1;
+  for (const row of c.board()) for (const p of row) {
+    if (!p || p.type !== 'p' || p.color !== color) continue;
+    const f = p.square.charCodeAt(0), r = +p.square[1] + dir;
+    if (r < 1 || r > 8) continue;
+    for (const df of [-1, 1]) {
+      const nf = f + df;
+      if (nf < 97 || nf > 104) continue;
+      const to = String.fromCharCode(nf) + r;
+      const occ = c.get(to);
+      if (!occ || occ.color !== color) add(p.square, to);
+    }
+  }
+  return map;
 }
 
 export function userResult(g) {
