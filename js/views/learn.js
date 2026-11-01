@@ -1,6 +1,6 @@
 // Learn: lessons (explanation, guided positions, themed practice puzzles) and endgame drills.
 import { Board } from '../board.js';
-import { Chess, dests, checkSquare, playUci, uciToMove, colorName, uciLineToSan, gameOverInfo } from '../chessutil.js';
+import { Chess, dests, checkSquare, playUci, uciToMove, colorName, uciLineToSan, formatLine, gameOverInfo } from '../chessutil.js';
 import { getEngine, formatScore } from '../engine.js';
 import * as store from '../store.js';
 import { icons, esc, toast, $, sound, moveSound } from '../ui.js';
@@ -111,6 +111,7 @@ function lessonView(root, id) {
     board.opts.onMove = null;
     const s = lesson.steps[n];
     if (!s) { if (lesson.practice) practice(); else finish(null); return; }
+    if (s.type === 'show') { showStep(n, s); return; }
     const chess = new Chess(s.fen);
     const me = chess.turn();
     let ply = 0;
@@ -210,6 +211,48 @@ function lessonView(root, id) {
     $('#l-skip', card).addEventListener('click', () => step(n + 1));
     render();
     advance();
+  }
+
+  // "show" step: a position to look at, with optional arrows and an optional line to play through
+  function showStep(n, s) {
+    const nextLabel = n + 1 < lesson.steps.length ? 'Next' : lesson.practice ? 'Practice puzzles' : 'Finish';
+    const arrows = (s.arrows || []).map(u => ({ ...uciToMove(u), color: 'rgba(32,150,210,.85)' }));
+    const sans = s.line ? uciLineToSan(s.fen, s.line) : [];
+    let chess = new Chess(s.fen);
+    const reset = () => {
+      chess = new Chess(s.fen);
+      board.setPosition(s.fen, { lastMove: null, check: checkSquare(chess), animate: false });
+      board.setArrows(arrows);
+    };
+    board.setOrientation(s.orientation || colorName(chess.turn()));
+    board.setMarks([]);
+    board.setMovable({});
+    reset();
+    card.innerHTML = `${header(`Step ${n + 1} of ${total}`)}
+      <p style="margin:0">${esc(s.text)}</p>
+      ${sans.length ? `<div class="status info" id="l-status">Tap <b>Play the moves</b> to see how it goes.</div>` : ''}
+      ${sans.length ? `<div class="grid-2"><button class="btn" id="l-play" type="button">${icons.start} Play the moves</button><button class="btn primary" id="l-next" type="button">${icons.next} ${nextLabel}</button></div>`
+        : `<button class="btn primary block" id="l-next" type="button">${icons.next} ${nextLabel}</button>`}`;
+    $('#l-next', card).addEventListener('click', () => step(n + 1));
+    $('#l-play', card)?.addEventListener('click', () => {
+      const playTok = ++stepToken; // also cancels a playback already running
+      reset();
+      board.setArrows([]);
+      const status = $('#l-status', card);
+      let i = 0;
+      const tick = () => {
+        if (!alive || playTok !== stepToken) return;
+        const m = playUci(chess, s.line[i]);
+        if (!m) return;
+        moveSound(m, chess);
+        board.setPosition(chess.fen(), { lastMove: [m.from, m.to], check: checkSquare(chess) });
+        i++;
+        status.innerHTML = esc(formatLine(s.fen, sans.slice(0, i)));
+        if (i < s.line.length) later(tick, 900);
+        else if (s.after) { status.className = 'status ok'; status.innerHTML = `${esc(formatLine(s.fen, sans))}<br>${esc(s.after)}`; }
+      };
+      later(tick, 400);
+    });
   }
 
   async function practice() {
