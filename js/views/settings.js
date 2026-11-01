@@ -36,6 +36,10 @@ export function mount(root) {
             ${PIECES.map(p => `<button type="button" class="chip" data-v="${p.id}" style="display:inline-flex;align-items:center;gap:6px"><img src="img/pieces/${p.id}/wN.svg" alt="" width="22" height="22">${p.name}</button>`).join('')}
           </div>
         </div>
+        <div class="field"><span class="label">Board size (laptop and desktop)</span>
+          <div class="seg" id="s-size" role="group" aria-label="Board size"><button type="button" data-v="s">Small</button><button type="button" data-v="m">Medium</button><button type="button" data-v="l">Large</button></div>
+        </div>
+        <label class="toggle"><span>Figurine notation (♘f3 instead of Nf3)</span><input type="checkbox" id="s-fig" ${s.figurine ? 'checked' : ''}></label>
         <label class="toggle"><span>Show coordinates</span><input type="checkbox" id="s-coords" ${s.coords ? 'checked' : ''}></label>
         <label class="toggle"><span>Show legal moves</span><input type="checkbox" id="s-dests" ${s.showDests !== false ? 'checked' : ''}></label>
         <label class="toggle"><span>Highlight the last move</span><input type="checkbox" id="s-last" ${s.lastMove !== false ? 'checked' : ''}></label>
@@ -87,6 +91,8 @@ export function mount(root) {
   seg('#s-theme', s.theme, (v) => { store.setSettings({ theme: v }); applyTheme(); });
   seg('#s-board', s.board, (v) => { store.setSettings({ board: v }); applyTheme(); });
   seg('#s-pieces', s.pieces, (v) => { store.setSettings({ pieces: v }); applyTheme(); });
+  seg('#s-size', s.boardSize || 'm', (v) => { store.setSettings({ boardSize: v }); applyTheme(); });
+  $('#s-fig', root).addEventListener('change', (e) => store.setSettings({ figurine: e.target.checked }));
   seg('#s-depth', s.reviewDepth, (v) => store.setSettings({ reviewDepth: v }));
   for (const sw of root.querySelectorAll('[data-board-swatch]')) {
     const [l, d] = SWATCH[sw.dataset.boardSwatch];

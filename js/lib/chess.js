@@ -3364,4 +3364,5 @@ class Chess {
     }
 }
 
-export { BISHOP, BLACK, Chess, DEFAULT_POSITION, KING, KNIGHT, Move, PAWN, QUEEN, ROOK, SEVEN_TAG_ROSTER, SQUARES, WHITE, validateFen, xoroshiro128 };
+// Kibitz Chess: the PGN parser is also exported so the analysis board can read variations and comments.
+export { BISHOP, BLACK, Chess, DEFAULT_POSITION, KING, KNIGHT, Move, PAWN, QUEEN, ROOK, SEVEN_TAG_ROSTER, SQUARES, WHITE, validateFen, xoroshiro128, peg$parse as parsePgnTree };

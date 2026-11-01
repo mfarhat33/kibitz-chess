@@ -35,6 +35,7 @@ export function applyTheme() {
   document.documentElement.dataset.autoqueen = s.autoQueen ? '1' : '0';
   document.documentElement.dataset.dests = s.showDests === false ? '0' : '1';
   document.documentElement.dataset.lastmove = s.lastMove === false ? '0' : '1';
+  document.documentElement.dataset.boardsize = ['s', 'l'].includes(s.boardSize) ? s.boardSize : 'm';
   $('meta[name="theme-color"]')?.setAttribute('content', dark ? '#121419' : '#f4f2ee');
   const tt = $('#theme-toggle');
   if (tt) {

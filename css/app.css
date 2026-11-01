@@ -654,3 +654,27 @@ a.icon-btn { color: var(--text); }
 .summary-line .q { width: 18px; height: 18px; font-size: 10px; }
 .rush-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 @media (max-width: 560px) { .rush-modes { grid-template-columns: 1fr 1fr; } .rush-modes > :last-child { grid-column: 1 / -1; } }
+
+/* board size setting (laptop / desktop) */
+@media (min-width: 900px) {
+  :root[data-boardsize="s"] .stage { --board: min(calc(100dvh - var(--top-h) - 110px), 500px); }
+  :root[data-boardsize="l"] .stage { --board: min(calc(100dvh - var(--top-h) - 70px), 860px); }
+  :root[data-boardsize="s"] .play-stage { --board: min(calc(100dvh - var(--top-h) - 214px), 480px); }
+  :root[data-boardsize="l"] .play-stage { --board: min(calc(100dvh - var(--top-h) - 190px), 820px); }
+}
+
+/* analysis board move tree */
+.tree-moves { max-height: 340px; overflow-y: auto; position: relative; font-size: .92rem; line-height: 1.9; }
+.tree-moves .tn { color: var(--muted); margin: 0 2px 0 6px; font-variant-numeric: tabular-nums; }
+.tree-moves .tm { padding: 2px 5px; border-radius: 6px; cursor: pointer; font-weight: 600; white-space: nowrap; }
+.tree-moves .tm:hover { background: var(--surface-2); }
+.tree-moves .tm.cur { background: var(--accent-soft); color: var(--accent); }
+.tree-moves .var { margin: 2px 0 2px calc(var(--d, 1) * 10px); padding-left: 8px; border-left: 2px solid var(--border); font-size: .88rem; }
+.tree-moves .var .tm { font-weight: 500; }
+.tree-moves .cmt { color: var(--muted); font-style: italic; margin: 0 4px; font-size: .86rem; }
+.tree-moves .nag { margin-left: 1px; font-weight: 800; }
+.nag-0 { color: var(--q-good, #4f7a12); } .nag-1 { color: var(--q-mistake); } .nag-2 { color: var(--q-brilliant, #1baaa6); }
+.nag-3 { color: var(--q-blunder); } .nag-4 { color: var(--q-great, #5c8bb0); } .nag-5 { color: var(--q-inaccuracy); }
+.move-tools { display: grid; gap: 6px; padding: 8px; border-radius: 10px; background: var(--surface-2); }
+.nag-btns { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.nag-btns .chip { min-width: 36px; padding: 2px 8px; font-weight: 800; }

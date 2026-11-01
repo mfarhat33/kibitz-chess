@@ -182,6 +182,13 @@ export function moveSound(move, chess) {
   else sound('move');
 }
 
+const FIGURINES = { K: '♔', Q: '♕', R: '♖', B: '♗', N: '♘' };
+/** Move text in figurine notation (♘f3 instead of Nf3) when that setting is on; plain text otherwise. */
+export function fig(text) {
+  if (!text || !getSettings().figurine) return text;
+  return String(text).replace(/(^|[\s.(=])([KQRBN])(?=[a-h1-8x+#]|$|\s)/g, (m, pre, p) => pre + FIGURINES[p]);
+}
+
 /** Builds the move list grid (desktop) from SAN moves. */
 export function moveListHtml(sans, cur, { startPly = 0, badges = [] } = {}) {
   let html = '';

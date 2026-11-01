@@ -6,8 +6,10 @@ import { winPct, gradeMove, LABEL_TEXT, LABEL_GLYPH } from '../analysis.js';
 import { LEVELS, DEFAULT_LEVEL, chooseBotMove, levelLabel } from '../bot.js';
 import * as store from '../store.js';
 import { playTabs } from './tabs.js';
-import { icons, esc, toast, confirm, fmtClock, sound, moveSound, $ } from '../ui.js';
+import { icons, esc, toast, confirm, fmtClock, sound, moveSound, $, fig } from '../ui.js';
 import { loadOpenings, openingOf } from '../openings-data.js';
+import { startReview } from '../review-run.js';
+import { DEPTHS } from '../analysis.js';
 
 export const TCS = [
   { id: 'none', label: 'No clock', base: 0, inc: 0 },
@@ -342,7 +344,7 @@ function gameView(root, state) {
     const curI = view == null ? sans.length - 1 : view - 1;
     sans.forEach((s, i) => {
       if ((i + shift) % 2 === 0) html += `<span class="n">${no0 + (i + shift) / 2}.</span>`;
-      html += `<span class="mvi${i === curI ? ' cur' : ''}" data-i="${i}">${esc(s)}</span>`;
+      html += `<span class="mvi${i === curI ? ' cur' : ''}" data-i="${i}">${esc(fig(s))}</span>`;
     });
     const strip = $('#moves-m', root);
     strip.innerHTML = html || '<span class="muted">No moves yet</span>';
@@ -352,7 +354,7 @@ function gameView(root, state) {
     let grid = shift ? `<span class="num">${no0}.</span><span class="mv muted">…</span>` : '';
     sans.forEach((s, i) => {
       if ((i + shift) % 2 === 0) grid += `<span class="num">${no0 + (i + shift) / 2}.</span>`;
-      grid += `<span class="mv${i === curI ? ' cur' : ''}" data-i="${i}">${esc(s)}</span>`;
+      grid += `<span class="mv${i === curI ? ' cur' : ''}" data-i="${i}">${esc(fig(s))}</span>`;
     });
     const g = $('#moves', root);
     g.innerHTML = grid;
@@ -631,7 +633,8 @@ function gameView(root, state) {
     after.innerHTML = `
       <h2 style="margin:0">${esc(resultText(state, level))}</h2>
       <p class="muted small" style="margin:0">${state.moves.length ? 'See where the game turned with move-by-move feedback.' : 'No moves were played.'}</p>
-      ${state.moves.length >= 2 ? `<a class="btn primary block" href="#/review/${record.id}">${icons.eye} Review game</a>` : ''}
+      ${state.moves.length >= 2 ? `<div id="auto-review" class="stack" style="gap:6px"><div class="tiny muted"><span class="spinner"></span> Reviewing the game in the background…</div><div class="progress"><i id="ar-prog"></i></div></div>
+      <a class="btn primary block" href="#/review/${record.id}">${icons.eye} Review game</a>` : ''}
       <div class="grid-2">
         <button class="btn" id="b-rematch" type="button">${icons.retry} Rematch</button>
         <button class="btn" id="b-new" type="button">${icons.plus} New game</button>
@@ -647,6 +650,24 @@ function gameView(root, state) {
     });
     $('#b-new', after).addEventListener('click', () => { unmount(); setupView(root); });
     after.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    // start the Stockfish review straight away, so it is ready (or nearly) when you open it
+    if (state.moves.length >= 2) {
+      const job = startReview(record, DEPTHS[settings.reviewDepth] || DEPTHS.standard);
+      const box = $('#auto-review', after);
+      const stop = job.listen((d, t) => { const bar = $('#ar-prog', after); if (bar) bar.style.width = (d / t * 100) + '%'; });
+      job.promise.then((rv) => {
+        stop();
+        if (!box?.isConnected) return;
+        if (!rv) { box.innerHTML = '<div class="tiny muted">The review will run when you open it.</div>'; return; }
+        const me = friend ? 'w' : user;
+        const acc = (c) => typeof rv.accuracy?.[c] === 'number' ? Number(rv.accuracy[c]).toFixed(1) : '—';
+        const cnt = (l) => Number(rv.counts?.[me]?.[l] || 0);
+        box.innerHTML = friend
+          ? `<div class="summary-line"><b>White ${acc('w')}%</b><b>Black ${acc('b')}%</b><span class="tiny muted">accuracy</span></div>`
+          : `<div class="summary-line"><b>Your accuracy: ${acc(me)}%</b>
+              <span><i class="q q-blunder">??</i> ${cnt('blunder')}</span><span><i class="q q-mistake">?</i> ${cnt('mistake')}</span><span><i class="q q-inaccuracy">?!</i> ${cnt('inaccuracy')}</span></div>`;
+      });
+    }
   }
 
   async function hint() {

@@ -7,12 +7,12 @@ import { explainMove } from '../explain.js';
 import { evalGraph } from '../charts.js';
 import * as store from '../store.js';
 import { playTabs, playFromPosition } from './tabs.js';
-import { icons, esc, toast, confirm, $, downloadFile, fmtDate, moveSound, sound, scrollToBoard } from '../ui.js';
+import { icons, esc, toast, confirm, $, downloadFile, fmtDate, moveSound, sound, scrollToBoard, fig } from '../ui.js';
 import { loadOpenings, isBook } from '../openings-data.js';
 
 const SHOW_IN_LIST = ['brilliant', 'great', 'best', 'book', ...BAD_LABELS];
 // bump when the label rules change: older reviews are re-labelled from their stored engine data
-const REVIEW_VERSION = 3;
+import { REVIEW_VERSION, startReview, reviewJob } from '../review-run.js';
 let ctx = null;
 
 export function unmount() { ctx?.destroy(); ctx = null; }
@@ -146,7 +146,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     let html = shift ? `<span class="n">${no0}...</span>` : '';
     line.sans.forEach((san, j) => {
       if ((j + shift) % 2 === 0) html += `<span class="n">${no0 + (j + shift) / 2}.</span>`;
-      html += `<span class="mvi${j === k - 1 ? ' cur' : ''}" data-l="${j}">${esc(san)}</span>`;
+      html += `<span class="mvi${j === k - 1 ? ' cur' : ''}" data-l="${j}">${esc(fig(san))}</span>`;
     });
     const el = $('#explain', root);
     el.innerHTML = `
@@ -298,7 +298,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     ex.sans.forEach((san, j) => {
       if ((j + shift) % 2 === 0) html += `<span class="n">${no0 + (j + shift) / 2}.</span>`;
       const l = ex.labels[j];
-      html += `<span class="mvi${j === k - 1 ? ' cur' : ''}" data-x="${j}">${l ? `<i class="q q-${l}" style="width:15px;height:15px;font-size:9px;vertical-align:-2px;margin-right:3px">${LABEL_GLYPH[l]}</i>` : ''}${esc(san)}</span>`;
+      html += `<span class="mvi${j === k - 1 ? ' cur' : ''}" data-x="${j}">${l ? `<i class="q q-${l}" style="width:15px;height:15px;font-size:9px;vertical-align:-2px;margin-right:3px">${LABEL_GLYPH[l]}</i>` : ''}${esc(fig(san))}</span>`;
     });
     const sc = ex.evals[k];
     const toMove = c.turn() === 'w' ? 'White' : 'Black';
@@ -605,7 +605,7 @@ export async function mount(root, [id], isCurrent = () => true) {
       const lab = r?.labels[i];
       const show = lab && SHOW_IN_LIST.includes(lab);
       const t = spent?.[i];
-      html += `<span class="mv${i === cur ? ' cur' : ''}" data-i="${i}">${esc(s)}${show ? `<i class="q q-${lab}" title="${LABEL_TEXT[lab]}">${LABEL_GLYPH[lab]}</i>` : ''}${t != null ? `<small class="mt" title="Time spent on this move">${fmtSpent(t)}</small>` : ''}</span>`;
+      html += `<span class="mv${i === cur ? ' cur' : ''}" data-i="${i}">${esc(fig(s))}${show ? `<i class="q q-${lab}" title="${LABEL_TEXT[lab]}">${LABEL_GLYPH[lab]}</i>` : ''}${t != null ? `<small class="mt" title="Time spent on this move">${fmtSpent(t)}</small>` : ''}</span>`;
     });
     const el = $('#moves', root);
     el.innerHTML = html;
@@ -716,23 +716,23 @@ export async function mount(root, [id], isCurrent = () => true) {
       <div class="explain-head"><span class="spinner"></span> Analysing the game</div>
       <p class="muted small" style="margin:0">Stockfish is checking every position at depth ${depth}. This runs on your device and usually takes under a minute.</p>
       <div class="progress"><i id="prog"></i></div><div class="tiny muted" id="prog-t">Starting engine…</div>`;
-    const eng = getEngine('analysis');
-    eng.cancel();
-    const raw = await analyzePositions(eng, fens, {
-      depth,
-      moves: game.moves,
-      isCancelled: () => !alive || run !== runId,
-      onProgress: (d, t) => {
-        if (!alive || run !== runId) return;
-        const bar = $('#prog', root), txt = $('#prog-t', root);
-        if (bar) bar.style.width = (d / t * 100) + '%';
-        if (txt) txt.textContent = `${d} of ${t} positions`;
-      },
-    });
+    const eng = getEngine('review');
+    // joins the review that started in the background when the game ended, if there is one
+    const job = startReview(game, depth);
+    const paint = (d, t) => {
+      if (!alive || run !== runId) return;
+      const bar = $('#prog', root), txt = $('#prog-t', root);
+      if (bar) bar.style.width = (d / t * 100) + '%';
+      if (txt) txt.textContent = `${d} of ${t} positions`;
+    };
+    if (job.done) paint(job.done, job.total);
+    const stop = job.listen(paint);
+    const saved = await job.promise;
+    stop();
     if (!alive || run !== runId) return; // superseded by a newer run
     analysing = false;
     setBusy(false);
-    if (!raw) {
+    if (!saved) {
       el.innerHTML = eng.failed
         ? `<div class="status bad">${icons.x} The chess engine could not be restarted on this device. Reload the page to try again.</div>`
         : `<div class="status bad">${icons.x} The engine stopped before the review finished. This can happen on phones that are low on memory.</div>
@@ -741,14 +741,7 @@ export async function mount(root, [id], isCurrent = () => true) {
       return;
     }
     el.classList.add('hidden');
-    const cls = classify(raw, game.moves, fens, isBook);
-    game.review = {
-      v: REVIEW_VERSION, depth, date: Date.now(),
-      evals: raw.evals, best: raw.best, pv: raw.pv, second: raw.second,
-      labels: cls.labels, acc: cls.acc.map(a => Math.round(a * 10) / 10), loss: cls.loss.map(a => Math.round(a * 10) / 10),
-      phases: cls.phases, accuracy: cls.accuracy, counts: cls.counts,
-    };
-    store.set('game:' + game.id, game);
+    game.review = saved;
     renderAll();
   }
 
