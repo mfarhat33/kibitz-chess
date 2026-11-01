@@ -678,3 +678,12 @@ a.icon-btn { color: var(--text); }
 .move-tools { display: grid; gap: 6px; padding: 8px; border-radius: 10px; background: var(--surface-2); }
 .nag-btns { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .nag-btns .chip { min-width: 36px; padding: 2px 8px; font-weight: 800; }
+/* coordinates trainer modes */
+.coord-mid { flex: 1; min-width: 0; display: flex; justify-content: center; }
+.coord-target-name { font-size: 2.6rem; color: var(--accent); }
+.coord-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; width: 100%; max-width: 320px; }
+.coord-choices .btn { padding: 0 4px; font-size: 1.15rem; font-weight: 750; min-height: 46px; }
+.coord-choices .btn.wrong { color: var(--bad); border-color: var(--bad); }
+.coord-moves { display: flex; align-items: center; gap: 10px; text-align: left; }
+.coord-moves .stat-label { white-space: nowrap; }
+.kb-sq.coord-target { background: rgba(240, 170, 20, .55); box-shadow: inset 0 0 0 4px rgba(214, 120, 0, .95); }

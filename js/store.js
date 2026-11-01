@@ -196,7 +196,8 @@ function sanitize(data) {
         drills: Object.fromEntries(Object.entries(v?.drills || {}).map(([id, x]) => [str(id, 40), { done: !!x?.done, t: num(x?.t), best: num(x?.best) }])),
       }; break;
       case 'quiz': out[k] = { best: Object.fromEntries(Object.entries(v?.best || {}).map(([m, x]) => [str(m, 20), num(x)])), runs: (Array.isArray(v?.runs) ? v.runs : []).map(r => ({ mode: str(r?.mode, 20), score: num(r?.score), t: num(r?.t) })) }; break;
-      case 'coords': out[k] = { best: { ...(v?.best?.white != null ? { white: num(v.best.white) } : {}), ...(v?.best?.black != null ? { black: num(v.best.black) } : {}) } }; break;
+      // best.white / best.black = "find the square"; name-* and moves-* = the other trainer modes
+      case 'coords': out[k] = { best: Object.fromEntries(['white', 'black', 'name-white', 'name-black', 'moves-white', 'moves-black'].filter(m => v?.best?.[m] != null).map(m => [m, num(v.best[m])])) }; break;
       case 'mistakes': out[k] = {
         cards: Object.fromEntries(Object.entries(v?.cards || {}).filter(([id]) => typeof id === 'string' && id.length < 80).map(([id, c]) => [id, {
           ease: num(c?.ease, 2.5), interval: num(c?.interval), reps: num(c?.reps), lapses: num(c?.lapses), due: num(c?.due), last: num(c?.last),
