@@ -10,6 +10,7 @@ export function mount(root) {
   const games = store.allGames();
   const imp = { site: 'chesscom', user: '', ...store.get('import.prefs', {}) };
   const cur = store.get('play.current');
+  const flt = { q: '', res: 'all', kind: 'all', ...store.get('games.filter', {}) };
   root.innerHTML = `
     ${playTabs('games')}
     <div class="page stack">
@@ -21,13 +22,57 @@ export function mount(root) {
         <div id="g-found" class="list"></div>
       </section>
       <section class="card">
-        <div class="row between"><h2 style="margin:0">My games</h2><span class="small muted">${games.length} game${games.length === 1 ? '' : 's'}</span></div>
-        <div class="list" style="margin-top:6px">
-          ${games.length ? games.map(row).join('') : `<div class="empty">No finished games yet.<br><a class="btn primary" style="margin-top:12px" href="#/play">${icons.start} Play your first game</a></div>`}
+        <div class="row between"><h2 style="margin:0">My games</h2><span class="small muted" id="g-count">${games.length} game${games.length === 1 ? '' : 's'}</span></div>
+        ${games.length ? `
+        <div class="stack" style="gap:8px;margin-top:10px">
+          <input type="search" id="g-q" placeholder="Search opponent or opening" aria-label="Search games" value="${esc(flt.q)}">
+          <div class="chips" id="g-res" role="group" aria-label="Result">
+            ${[['all', 'All'], ['win', 'Wins'], ['draw', 'Draws'], ['loss', 'Losses']].map(([v, l]) => `<button type="button" class="chip" data-v="${v}">${l}</button>`).join('')}
+          </div>
+          <div class="chips" id="g-kind" role="group" aria-label="Type">
+            ${[['all', 'All games'], ['bot', 'Vs bots'], ['imported', 'Imported'], ['friend', 'With a friend'], ['todo', 'Not reviewed']].map(([v, l]) => `<button type="button" class="chip" data-v="${v}">${l}</button>`).join('')}
+          </div>
+        </div>` : ''}
+        <div class="list" id="g-list" style="margin-top:6px">
+          ${games.length ? '' : `<div class="empty">No finished games yet.<br><a class="btn primary" style="margin-top:12px" href="#/play">${icons.start} Play your first game</a></div>`}
         </div>
       </section>
     </div>`;
   wire(root, imp);
+  if (games.length) wireFilters(root, games, flt);
+}
+
+function matches(g, f) {
+  if (f.res !== 'all' && g.userResult !== f.res) return false;
+  if (f.kind === 'bot' && (g.imported || g.friend)) return false;
+  if (f.kind === 'imported' && !g.imported) return false;
+  if (f.kind === 'friend' && !g.friend) return false;
+  if (f.kind === 'todo' && g.review) return false;
+  const q = f.q.trim().toLowerCase();
+  if (q) {
+    const hay = [g.botName, g.whiteName, g.blackName, g.opening?.name, g.opening?.eco, g.botLabel].filter(Boolean).join(' ').toLowerCase();
+    if (!q.split(/\s+/).every(w => hay.includes(w))) return false;
+  }
+  return true;
+}
+
+function wireFilters(root, games, flt) {
+  const list = $('#g-list', root);
+  const mark = (sel, v) => root.querySelectorAll(`${sel} button`).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
+  const draw = () => {
+    store.set('games.filter', flt);
+    mark('#g-res', flt.res);
+    mark('#g-kind', flt.kind);
+    const shown = games.filter(g => matches(g, flt));
+    const LIMIT = 200;
+    list.innerHTML = shown.length ? shown.slice(0, LIMIT).map(row).join('') + (shown.length > LIMIT ? `<div class="tiny muted" style="padding:8px">Showing the newest ${LIMIT}. Search to narrow it down.</div>` : '')
+      : '<div class="empty small">No games match these filters.</div>';
+    $('#g-count', root).textContent = shown.length === games.length ? `${games.length} game${games.length === 1 ? '' : 's'}` : `${shown.length} of ${games.length}`;
+  };
+  $('#g-q', root).addEventListener('input', (e) => { flt.q = e.target.value; draw(); });
+  $('#g-res', root).addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { flt.res = b.dataset.v; draw(); } });
+  $('#g-kind', root).addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { flt.kind = b.dataset.v; draw(); } });
+  draw();
 }
 
 function wire(root, imp) {

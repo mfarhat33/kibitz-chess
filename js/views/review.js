@@ -20,6 +20,8 @@ export function unmount() { ctx?.destroy(); ctx = null; }
 /** Display names for both sides; `viewer` is the user's colour, or null for someone else's game. */
 export function sidesOf(game) {
   const label = game.botLabel ? ` (${game.botLabel})` : '';
+  // a game two people played on this device: no "you", just the two colours
+  if (game.friend) return { names: { w: game.whiteName || 'White', b: game.blackName || 'Black' }, viewer: null };
   if (game.imported) {
     const names = { w: game.whiteName || 'White', b: game.blackName || 'Black' };
     if (game.spectator) return { names, viewer: null };
@@ -591,8 +593,8 @@ export async function mount(root, [id], isCurrent = () => true) {
     const el = $('#info', root);
     const res = { win: 'Won', loss: 'Lost', draw: 'Drew' }[game.userResult];
     const opp = user === 'w' ? 'b' : 'w';
-    const head = game.imported
-      ? `${esc(names.w)} vs ${esc(names.b)} · ${esc(game.result)}`
+    const head = game.imported || game.friend || !res
+      ? `${esc(names.w)} vs ${esc(names.b)} · ${esc(game.result)}${game.reason && !game.imported ? ` by ${esc(game.reason)}` : ''}`
       : `${res} as ${user === 'w' ? 'White' : 'Black'} vs ${esc(names[opp])} · ${esc(game.result)} by ${esc(game.reason)}`;
     el.innerHTML = `
       <h3 style="margin:0">Game details${game.imported ? ' <span class="tiny muted">(imported)</span>' : ''}</h3>
