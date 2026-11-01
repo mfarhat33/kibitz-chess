@@ -61,9 +61,27 @@ export function continuations(fen) {
     if (!m) continue;
     const next = data.pos[posKey(c.fen())];
     const info = next ? lineInfo(next[0] >= 0 ? next[0] : next[2]) : null;
-    out.push({ uci: u, san: m.san, name: info?.name || '', eco: info?.eco || '', named: !!next && next[0] >= 0, lines: next?.[1]?.length || 0 });
+    out.push({ uci: u, san: m.san, name: info?.name || '', eco: info?.eco || '', named: !!next && next[0] >= 0, lines: next?.[1]?.length || 0, depth: next ? theorySize(c.fen()) : 0 });
   }
-  return out.sort((a, b) => (b.named - a.named) || (b.lines - a.lines) || a.san.localeCompare(b.san));
+  // main moves first: the ones with the most opening theory after them
+  return out.sort((a, b) => (b.depth - a.depth) || (b.named - a.named) || (b.lines - a.lines) || a.san.localeCompare(b.san));
+}
+
+// how many known positions follow a position (memoised; transpositions are fine, cycles are cut)
+const sizeMemo = new Map();
+function theorySize(fen) {
+  const key = posKey(fen);
+  if (sizeMemo.has(key)) return sizeMemo.get(key);
+  sizeMemo.set(key, 0);
+  const e = data.pos[key];
+  let n = 1;
+  for (const u of e?.[1] || []) {
+    const c = new Chess(fen);
+    if (!playUci(c, u)) continue;
+    if (data.pos[posKey(c.fen())]) n += theorySize(c.fen());
+  }
+  sizeMemo.set(key, n);
+  return n;
 }
 
 export function bookMoves(fen) {

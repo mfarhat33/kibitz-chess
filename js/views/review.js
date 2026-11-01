@@ -6,11 +6,11 @@ import { positions, analyzePositions, classify, phaseStats, DEPTHS, LABELS, BAD_
 import { explainMove } from '../explain.js';
 import { evalGraph } from '../charts.js';
 import * as store from '../store.js';
-import { playTabs, playFromPosition } from './tabs.js';
+import { playTabs, playFromPosition, openOnAnalysisBoard } from './tabs.js';
 import { icons, esc, toast, confirm, $, downloadFile, fmtDate, moveSound, sound, scrollToBoard, fig } from '../ui.js';
 import { loadOpenings, isBook } from '../openings-data.js';
 
-const SHOW_IN_LIST = ['brilliant', 'great', 'best', 'book', ...BAD_LABELS];
+const SHOW_IN_LIST = ['brilliant', 'great', 'best', 'book', 'forced', ...BAD_LABELS];
 // bump when the label rules change: older reviews are re-labelled from their stored engine data
 import { REVIEW_VERSION, startReview, reviewJob } from '../review-run.js';
 let ctx = null;
@@ -310,14 +310,14 @@ export async function mount(root, [id], isCurrent = () => true) {
       const bestSan = ex.best[k - 1] && ex.best[k - 1] !== ex.moves[k - 1] ? sanOf(ex.fens[k - 1], ex.best[k - 1]) : null;
       const word = LABEL_TEXT[lab].toLowerCase();
       const phrase = BAD_LABELS.includes(lab) || /move$/.test(word) ? word : `${word} move`;
-      verdict = `<p class="small" style="margin:0"><b>${esc(ex.sans[k - 1])}</b> is ${/^[aeiou]/i.test(phrase) ? 'an' : 'a'} <span class="tq-${lab}" style="font-weight:700">${phrase}</span>${bestSan && BAD_LABELS.includes(lab) ? `. Better was <b>${esc(bestSan)}</b> (green arrow)` : ''}.</p>`;
+      verdict = `<p class="small" style="margin:0"><b>${esc(fig(ex.sans[k - 1]))}</b> is ${/^[aeiou]/i.test(phrase) ? 'an' : 'a'} <span class="tq-${lab}" style="font-weight:700">${phrase}</span>${bestSan && BAD_LABELS.includes(lab) ? `. Better was <b>${esc(fig(bestSan))}</b> (green arrow)` : ''}.</p>`;
     }
     let reply = '';
     if (c.isCheckmate()) reply = `<p class="small" style="margin:0"><b>Checkmate.</b></p>`;
     else if (c.isGameOver()) reply = `<p class="small" style="margin:0"><b>The game would end in a draw here.</b></p>`;
     else if (ex.best[k]) {
       const pvTxt = lineSans(fen, ex.replyLine[k].slice(0, 6));
-      reply = `<p class="small" style="margin:0">Best for ${toMove} now: <b>${esc(sanOf(fen, ex.best[k]))}</b> (blue arrow)${pvTxt ? `, for example <span class="mono">${esc(pvTxt)}</span>` : ''}.</p>`;
+      reply = `<p class="small" style="margin:0">Best for ${toMove} now: <b>${esc(fig(sanOf(fen, ex.best[k])))}</b> (blue arrow)${pvTxt ? `, for example <span class="mono">${esc(fig(pvTxt))}</span>` : ''}.</p>`;
     }
     const el = $('#explain', root);
     el.innerHTML = `
@@ -468,8 +468,8 @@ export async function mount(root, [id], isCurrent = () => true) {
           <span><i class="q q-inaccuracy">${LABEL_GLYPH.inaccuracy}</i> ${cnt('inaccuracy')}</span>
         </div>
         <p class="muted small" style="margin:0">Step through the moves with the arrows, tap the graph, or jump straight to the mistakes. You can also drag pieces to try your own ideas.</p>
-        <button class="btn primary" id="x-next-mistake" type="button">${icons.target} ${viewer ? 'Go to my first mistake' : 'Go to the first mistake'}</button>`;
-      $('#x-next-mistake', el).addEventListener('click', nextMistake);
+        ${r.labels.some((l, i) => BAD_LABELS.includes(l) && isMine(i)) ? `<button class="btn primary" id="x-next-mistake" type="button">${icons.target} ${viewer ? 'Go to my first mistake' : 'Go to the first mistake'}</button>` : `<div class="status ok small">${icons.check} No mistakes${viewer ? ' from you' : ''} in this game. Step through it to see the best moves.</div>`}`;
+      $('#x-next-mistake', el)?.addEventListener('click', nextMistake);
       return;
     }
     const ex = explainMove(cur, { fens, moves: game.moves, sans, review: r, viewer, names: speakNames });
@@ -693,8 +693,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     $('#i-analyse', el).addEventListener('click', () => {
       const result = game.result && game.result !== '*' ? game.result : undefined;
       const white = game.imported ? game.whiteName : names.w, black = game.imported ? game.blackName : names.b;
-      store.set('analysis.board', { startFen, line: game.moves.slice(), ply: cur + 1, headers: { White: white, Black: black, Result: result }, orientation: colorName(user) });
-      location.hash = '#/analysis';
+      openOnAnalysisBoard({ startFen, line: game.moves.slice(), ply: cur + 1, headers: { White: white, Black: black, Result: result }, orientation: colorName(user) });
     });
     $('#i-del', el).addEventListener('click', async () => {
       if (await confirm('Delete this game?', '<p class="muted">It will be removed from your history and insights.</p>', 'Delete', true)) {
@@ -726,6 +725,7 @@ export async function mount(root, [id], isCurrent = () => true) {
       if (txt) txt.textContent = `${d} of ${t} positions`;
     };
     if (job.done) paint(job.done, job.total);
+    else if (job.waiting) { const txt = $('#prog-t', root); if (txt) txt.textContent = 'Waiting for another game\'s review to finish…'; }
     const stop = job.listen(paint);
     const saved = await job.promise;
     stop();

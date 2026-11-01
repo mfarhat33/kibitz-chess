@@ -5,6 +5,7 @@ import { icons, esc, toast, $, sound } from '../ui.js';
 import { pickPuzzle, loadIndex, prefetch, loadBucket } from '../puzzle-data.js';
 import { PuzzlePlayer, updateRating, START_RATING } from '../puzzle-player.js';
 import { themeName } from '../themes.js';
+import { openOnAnalysisBoard } from './tabs.js';
 import { Chess, playUci, checkSquare } from '../chessutil.js';
 
 let ctx = null;
@@ -94,7 +95,7 @@ async function dailyView(root, isCurrent) {
     solutionStepper(el, board, pz);
   };
   const player = new PuzzlePlayer(board, pz, {
-    onStep: (p) => { if (p.chess.turn() === p.solver) status(`Find the best move for <b>${p.solverName}</b>`); },
+    onStep: (p) => { if (p.chess.turn() === p.solver) status(`${d.days[key] === 1 ? 'Already solved today, so this one is just for fun. ' : ''}Find the best move for <b>${p.solverName}</b>`); },
     onWrong: (p, uci, san) => { sound('bad'); if (!failed) { failed = true; save(false); } status(`${esc(san)} is not it. Try again.`, 'bad'); },
     onSolved: () => { sound('good'); save(!failed); status(`${icons.check} ${failed ? 'Solved, but it does not count for the streak.' : 'Solved! Streak extended.'}`, 'ok'); after(); },
   });
@@ -292,10 +293,9 @@ export async function mount(root, params = [], isCurrent = () => true) {
 }
 
 /** Opens a puzzle on the analysis board at the position the solver faced, with the full solution as the line. */
-function analysePuzzle(pz) {
+export function analysePuzzle(pz) {
   const solverWhite = pz.fen.split(' ')[1] === 'b'; // the first move is the opponent's
-  store.set('analysis.board', { startFen: pz.fen, line: pz.moves.slice(), ply: 1, headers: null, orientation: solverWhite ? 'white' : 'black' });
-  location.hash = '#/analysis';
+  openOnAnalysisBoard({ startFen: pz.fen, line: pz.moves.slice(), ply: 1, headers: null, orientation: solverWhite ? 'white' : 'black' });
 }
 
 /**

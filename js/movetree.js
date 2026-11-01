@@ -72,6 +72,7 @@ export class MoveTree {
     const ser = (n) => {
       const o = { u: n.uci };
       if (n.comment) o.c = n.comment;
+      if (Number.isFinite(n.clk)) o.t = n.clk;
       if (n.nag) o.n = n.nag;
       if (n.children.length) o.k = n.children.map(ser);
       return o;
@@ -87,6 +88,7 @@ export class MoveTree {
         const n = t.add(parent, o.u);
         if (!n) continue;
         if (o.c) n.comment = String(o.c).slice(0, 2000);
+        if (Number.isFinite(o.t)) n.clk = o.t;
         if (NAGS.includes(o.n)) n.nag = o.n;
         load(n, o.k);
       }
@@ -152,7 +154,11 @@ export class MoveTree {
 
   /** Reads a PGN (with variations, comments and annotations). Throws if the main line has an illegal move. */
   static fromPgn(text) {
-    const parsed = parsePgnTree(text.trim());
+    // a file with several games: take the first one
+    let src = text.trim();
+    const second = src.slice(1).search(/\n\s*\n\s*\[Event /);
+    if (second > 0) src = src.slice(0, second + 1);
+    const parsed = parsePgnTree(src);
     const headers = parsed.headers || {};
     const fenKey = Object.keys(headers).find(k => k.toLowerCase() === 'fen');
     const start = fenKey ? new Chess(headers[fenKey]).fen() : START_FEN;
@@ -161,18 +167,26 @@ export class MoveTree {
     let mainMoves = 0;
     const walk = (treeNode, parsedNode, main) => {
       // the parser wraps each side line in a node without a move; unwrap those into plain alternatives
+      // (recursively: a side line can itself start with a nested side line, and may carry a comment before its first move)
       const kids = [];
-      for (const v of parsedNode.variations || []) {
-        if (v.move) kids.push(v);
-        else for (const w of v.variations || []) if (w.move) kids.push(w);
-      }
+      const unwrap = (v, pre) => {
+        if (v.move) { if (pre) v.comment = v.comment ? `${pre} ${v.comment}` : pre; kids.push(v); return; }
+        (v.variations || []).forEach((w, i) => unwrap(w, i === 0 ? [pre, v.comment].filter(Boolean).join(' ') : ''));
+      };
+      for (const v of parsedNode.variations || []) unwrap(v, '');
       kids.forEach((k, i) => {
         const c = new Chess(treeNode.fen);
         let m = null;
         try { m = c.move(k.move, { strict: false }); } catch { m = null; }
         if (!m) { if (main && i === 0) throw new Error(`Illegal move ${k.move}`); return; }
         const n = t.add(treeNode, m.from + m.to + (m.promotion || ''));
-        if (k.comment) n.comment = k.comment;
+        if (k.comment) {
+          // chess sites put clock and engine data in comments: keep the clock, hide the commands
+          const clk = /\[%clk\s+(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)\]/.exec(k.comment);
+          if (clk) n.clk = Math.round(((+clk[1]) * 3600 + (+clk[2]) * 60 + (+clk[3])) * 1000);
+          const text = k.comment.replace(/\[%[^\]]*\]/g, '').replace(/\s+/g, ' ').trim();
+          if (text) n.comment = text;
+        }
         const suffix = Array.isArray(k.suffix) ? k.suffix.join('') : k.suffix;
         const code = Array.isArray(k.nag) ? k.nag[0] : k.nag;
         const nag = NAGS.includes(suffix) ? suffix : code != null ? CODE_NAG['$' + String(code).replace('$', '')] : null;

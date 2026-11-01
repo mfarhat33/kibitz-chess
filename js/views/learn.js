@@ -94,9 +94,17 @@ function lessonView(root, id) {
   const card = $('#l-card', root);
   const total = lesson.steps.length + (lesson.practice ? 1 : 0);
 
-  const header = (k) => `<div class="row between nowrap"><a class="tiny" href="#/learn">${icons.prev.replace('<svg', '<svg style="width:14px;height:14px;vertical-align:-2px"')} Lessons</a><span class="tiny muted">${k}</span></div><h2 style="margin:0">${esc(lesson.title)}</h2>`;
+  const small = (ic) => ic.replace('<svg', '<svg style="width:14px;height:14px;vertical-align:-2px"');
+  // back: show a "Previous" link that returns to the step before (or the introduction)
+  const header = (k, back = false) => `<div class="row between nowrap"><a class="tiny" href="#/learn">${small(icons.prev)} Lessons</a><span class="row nowrap" style="gap:10px">${back ? `<button type="button" class="linklike tiny" id="l-prevstep">${small(icons.prev)} Previous</button>` : ''}<span class="tiny muted">${k}</span></span></div><h2 style="margin:0">${esc(lesson.title)}</h2>`;
+  const wireBack = (n) => $('#l-prevstep', card)?.addEventListener('click', () => (n > 0 ? step(n - 1) : intro()));
 
   function intro() {
+    ++stepToken;
+    engine.cancel();
+    board.opts.onMove = null;
+    board.setArrows([]);
+    board.setMarks([]);
     board.setOrientation('white');
     board.setPosition(lesson.steps[0]?.fen || new Chess().fen(), { lastMove: null, animate: false });
     board.setMovable({});
@@ -120,10 +128,11 @@ function lessonView(root, id) {
     board.setOrientation(colorName(me));
     board.setArrows([]);
     board.setMarks([]);
-    card.innerHTML = `${header(`Step ${n + 1} of ${total}`)}
+    card.innerHTML = `${header(`Step ${n + 1} of ${total}`, true)}
       <p style="margin:0">${esc(s.text)}</p>
       <div class="status info" id="l-status">${me === 'w' ? 'White' : 'Black'} to move</div>
       <div class="grid-2"><button class="btn" id="l-show" type="button">${icons.eye} Show me</button><button class="btn" id="l-skip" type="button">${icons.next} Skip</button></div>`;
+    wireBack(n);
     const status = (html, cls = 'info') => { const e = $('#l-status', card); if (e) { e.className = 'status ' + cls; e.innerHTML = html; } };
     const render = () => {
       board.setPosition(chess.fen(), { lastMove: last, check: checkSquare(chess) });
@@ -228,12 +237,13 @@ function lessonView(root, id) {
     board.setMarks([]);
     board.setMovable({});
     reset();
-    card.innerHTML = `${header(`Step ${n + 1} of ${total}`)}
+    card.innerHTML = `${header(`Step ${n + 1} of ${total}`, true)}
       <p style="margin:0">${esc(s.text)}</p>
       ${sans.length ? `<div class="status info" id="l-status">Tap <b>Play the moves</b> to see how it goes.</div>` : ''}
       ${sans.length ? `<div class="grid-2"><button class="btn" id="l-play" type="button">${icons.start} Play the moves</button><button class="btn primary" id="l-next" type="button">${icons.next} ${nextLabel}</button></div>`
         : `<button class="btn primary block" id="l-next" type="button">${icons.next} ${nextLabel}</button>`}`;
     $('#l-next', card).addEventListener('click', () => step(n + 1));
+    wireBack(n);
     $('#l-play', card)?.addEventListener('click', () => {
       const playTok = ++stepToken; // also cancels a playback already running
       reset();
@@ -272,7 +282,7 @@ function lessonView(root, id) {
       if (k >= PRACTICE_COUNT) { finish(solved); return; }
       k++;
       card.innerHTML = `${header(`Practice ${k} of ${PRACTICE_COUNT}`)}<div class="theme-tags">${cfg.themes.map(t => `<span>${esc(themeName(t))}</span>`).join('')}</div><div class="status info" id="l-status"><span class="spinner"></span> Loading puzzle…</div>
-        <div class="grid-2"><button class="btn" id="l-hint" type="button">${icons.hint} Hint</button><button class="btn" id="l-sol" type="button">${icons.eye} Solution</button></div>`;
+        <div class="grid-2 grid-3"><button class="btn" id="l-hint" type="button">${icons.hint} Hint</button><button class="btn" id="l-sol" type="button">${icons.eye} Solution</button><button class="btn" id="l-pskip" type="button">${icons.next} Skip</button></div>`;
       const target = cfg.min + Math.random() * (cfg.max - cfg.min);
       let pz;
       try {
@@ -296,6 +306,7 @@ function lessonView(root, id) {
       });
       player.start();
       $('#l-hint', card).addEventListener('click', () => { clean = false; player.hint(); });
+      $('#l-pskip', card).addEventListener('click', () => { clean = false; player?.destroy(); player = null; nextOne(); });
       $('#l-sol', card).addEventListener('click', () => {
         clean = false;
         status('Here is the solution.', 'info');

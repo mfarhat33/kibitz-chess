@@ -7,7 +7,7 @@ import * as store from '../store.js';
 import { icons, esc, toast, dialog, $, moveSound } from '../ui.js';
 import { loadOpenings, openingOf, continuations, isBook, searchLines } from '../openings-data.js';
 import { addLine, trainerTabs } from './trainer.js';
-import { playFromPosition } from './tabs.js';
+import { playFromPosition, openOnAnalysisBoard } from './tabs.js';
 
 let ctx = null;
 export function unmount() { ctx?.destroy(); ctx = null; }
@@ -199,8 +199,7 @@ export async function mount(root, params, isCurrent = () => true) {
     if ((await playFromPosition(chessAt(ply).fen())) === 'over') toast('The game is over in this position');
   });
   $('#o-analyse', root).addEventListener('click', () => {
-    store.set('analysis.board', { startFen: new Chess().fen(), line: line.slice(0, ply), ply, headers: null, orientation: board.orientation });
-    location.hash = '#/analysis';
+    openOnAnalysisBoard({ startFen: new Chess().fen(), line: line.slice(0, ply), ply, headers: null, orientation: board.orientation });
   });
   $('#o-train', root).addEventListener('click', async () => {
     const moves = line.slice(0, ply);

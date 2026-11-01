@@ -632,7 +632,7 @@ function gameView(root, state) {
     after.classList.remove('hidden');
     after.innerHTML = `
       <h2 style="margin:0">${esc(resultText(state, level))}</h2>
-      <p class="muted small" style="margin:0">${state.moves.length ? 'See where the game turned with move-by-move feedback.' : 'No moves were played.'}</p>
+      <p class="muted small" style="margin:0">${state.moves.length >= 2 ? 'See where the game turned with move-by-move feedback.' : state.moves.length ? 'The game was too short to review. Try the position on the analysis board instead.' : 'No moves were played.'}</p>
       ${state.moves.length >= 2 ? `<div id="auto-review" class="stack" style="gap:6px"><div class="tiny muted"><span class="spinner"></span> Reviewing the game in the background…</div><div class="progress"><i id="ar-prog"></i></div></div>
       <a class="btn primary block" href="#/review/${record.id}">${icons.eye} Review game</a>` : ''}
       <div class="grid-2">
@@ -813,10 +813,12 @@ function gameView(root, state) {
     const el = $('#coach', root);
     el.className = `coach coach-${label}`;
     el.innerHTML = `<i class="q q-${label}">${LABEL_GLYPH[label]}</i>
-      <div class="grow"><b>${esc(san)}</b> was ${label === 'miss' ? 'a missed chance' : `a ${LABEL_TEXT[label].toLowerCase()}`}.${bestSan ? ` Better was <b>${esc(bestSan)}</b>.` : ''}</div>
+      <div class="grow"><b>${esc(fig(san))}</b> was ${label === 'miss' ? 'a missed chance' : `a ${LABEL_TEXT[label].toLowerCase()}`}.${bestSan ? ` Better was <b>${esc(fig(bestSan))}</b>.` : ''}</div>
       <button class="btn small primary" id="c-undo" type="button">${icons.undo} Take back</button>
       <button class="btn small" id="c-hide" type="button" aria-label="Keep playing">${icons.x}</button>`;
     sound('bad');
+    // on the same spot as the status line, so the buttons below never move
+    $('#status', root).classList.add('hidden');
     $('#c-hide', el).addEventListener('click', hideCoach);
     $('#c-undo', el).addEventListener('click', () => {
       hideCoach();
@@ -827,7 +829,7 @@ function gameView(root, state) {
       takeback();
     });
   }
-  function hideCoach() { $('#coach', root)?.classList.add('hidden'); }
+  function hideCoach() { $('#coach', root)?.classList.add('hidden'); $('#status', root)?.classList.remove('hidden'); }
 
   // ---------- bot chat: short lines from the bot, shown in a bubble that fades ----------
   function pickLine(arr) { return arr[Math.floor(Math.random() * arr.length)]; }

@@ -1,5 +1,6 @@
 // Runs the full Stockfish review of a game and saves it on the game record. One job per game at a time,
 // shared between the game-over card (which starts it right away) and the review page (which shows it).
+// Jobs for different games wait in line on one engine instead of interrupting each other.
 import { getEngine } from './engine.js';
 import { positions, analyzePositions, classify } from './analysis.js';
 import { isBook } from './openings-data.js';
@@ -8,14 +9,19 @@ import * as store from './store.js';
 
 export const REVIEW_VERSION = 3;
 const jobs = new Map();
+let queue = Promise.resolve();
+let active = null;
 
-/** The running job for this game id, if any: { depth, done, total, promise, listen(fn) }. */
+/** The running or waiting job for this game id, if any: { depth, done, total, promise, listen(fn) }. */
 export function reviewJob(id) { return jobs.get(id) || null; }
 
-/** Stops a running job (for example to start a deeper one). */
+/** Stops a job (for example to start a deeper one). Only the engine work of that job is stopped. */
 export function cancelReview(id) {
   const j = jobs.get(id);
-  if (j) { j.cancelled = true; jobs.delete(id); getEngine('review').cancel(); }
+  if (!j) return;
+  j.cancelled = true;
+  jobs.delete(id);
+  if (active === j) getEngine('review').cancel();
 }
 
 /**
@@ -28,15 +34,23 @@ export function startReview(game, depth) {
   if (running) cancelReview(game.id);
   const fens = positions(game.moves, game.startFen || START_FEN);
   const listeners = new Set();
-  const job = { id: game.id, depth, done: 0, total: fens.length, cancelled: false, listen: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } };
+  const job = { id: game.id, depth, done: 0, total: fens.length, cancelled: false, waiting: true, listen: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } };
   // its own engine, so hints, exploring moves or a new game never interrupt it
   const eng = getEngine('review');
-  job.promise = analyzePositions(eng, fens, {
-    depth,
-    moves: game.moves,
-    isCancelled: () => job.cancelled,
-    onProgress: (d, t) => { job.done = d; job.total = t; listeners.forEach(fn => { try { fn(d, t); } catch { /* listener gone */ } }); },
-  }).then((raw) => {
+  const run = async () => {
+    if (job.cancelled) return null;
+    active = job;
+    job.waiting = false;
+    try {
+      return await analyzePositions(eng, fens, {
+        depth,
+        moves: game.moves,
+        isCancelled: () => job.cancelled,
+        onProgress: (d, t) => { job.done = d; job.total = t; listeners.forEach(fn => { try { fn(d, t); } catch { /* listener gone */ } }); },
+      });
+    } finally { if (active === job) active = null; }
+  };
+  job.promise = (queue = queue.then(run, run)).then((raw) => {
     if (jobs.get(game.id) === job) jobs.delete(game.id);
     if (!raw || job.cancelled) return null;
     const cls = classify(raw, game.moves, fens, isBook);

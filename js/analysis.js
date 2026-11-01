@@ -56,14 +56,28 @@ function stdDev(xs) {
  * Game accuracy per colour, following Lichess: a volatility-weighted mean of move accuracies,
  * averaged with their harmonic mean. `wins` are white win% for positions 0..n.
  */
-export function gameAccuracy(wins, startColor = 'w') {
+/** Per-move weights from how much the position swings around that move (Lichess-style). */
+function volatilityWeights(wins) {
   const n = wins.length - 1;
-  if (n < 1) return { w: null, b: null };
   const size = Math.max(2, Math.min(8, Math.floor(n / 10)));
   const windows = [];
   for (let i = 0; i < Math.min(size, wins.length) - 2; i++) windows.push(wins.slice(0, size));
   for (let i = 0; i + size <= wins.length; i++) windows.push(wins.slice(i, i + size));
-  const weights = windows.map(w => Math.max(0.5, Math.min(12, stdDev(w))));
+  return windows.map(w => Math.max(0.5, Math.min(12, stdDev(w))));
+}
+/** Combines move accuracies the way game accuracy does: the mean of the weighted and the harmonic mean. */
+function combineAcc(xs) {
+  if (!xs.length) return null;
+  const wsum = xs.reduce((s, x) => s + x.weight, 0);
+  const weighted = xs.reduce((s, x) => s + x.acc * x.weight, 0) / wsum;
+  const harmonic = xs.length / xs.reduce((s, x) => s + 1 / Math.max(1, x.acc), 0);
+  return (weighted + harmonic) / 2;
+}
+
+export function gameAccuracy(wins, startColor = 'w') {
+  const n = wins.length - 1;
+  if (n < 1) return { w: null, b: null };
+  const weights = volatilityWeights(wins);
   const per = { w: [], b: [] };
   for (let i = 0; i < n; i++) {
     const color = (i % 2 === 0) === (startColor === 'w') ? 'w' : 'b';
@@ -72,14 +86,7 @@ export function gameAccuracy(wins, startColor = 'w') {
     per[color].push({ acc: moveAccuracy(before, after), weight: weights[i] ?? 1 });
   }
   const out = {};
-  for (const c of ['w', 'b']) {
-    const xs = per[c];
-    if (!xs.length) { out[c] = null; continue; }
-    const wsum = xs.reduce((s, x) => s + x.weight, 0);
-    const weighted = xs.reduce((s, x) => s + x.acc * x.weight, 0) / wsum;
-    const harmonic = xs.length / xs.reduce((s, x) => s + 1 / Math.max(1, x.acc), 0);
-    out[c] = (weighted + harmonic) / 2;
-  }
+  for (const c of ['w', 'b']) out[c] = combineAcc(per[c]);
   return out;
 }
 
@@ -324,15 +331,22 @@ export function classify(raw, moves, fens, isBookPos = () => false) {
 /** Stats per phase for one colour: accuracy and mistakes. */
 export function phaseStats(review, fens, color) {
   const out = {};
-  for (const ph of ['opening', 'middlegame', 'endgame']) out[ph] = { moves: 0, accSum: 0, blunders: 0, mistakes: 0, inaccuracies: 0 };
+  const per = {};
+  for (const ph of ['opening', 'middlegame', 'endgame']) { out[ph] = { moves: 0, accSum: 0, blunders: 0, mistakes: 0, inaccuracies: 0 }; per[ph] = []; }
+  // phase accuracy is combined the same way as game accuracy, so the two numbers agree
+  let weights = null;
+  try { if (Array.isArray(review.evals) && review.evals.length === review.labels.length + 1) weights = volatilityWeights(review.evals.map(e => winPct(e))); } catch { weights = null; }
   review.labels.forEach((lab, i) => {
     if (fens[i].split(' ')[1] !== color) return;
     const s = out[review.phases[i]];
+    if (!s) return;
     s.moves++;
-    s.accSum += review.acc[i];
+    per[review.phases[i]].push({ acc: review.acc[i], weight: weights?.[i] ?? 1 });
     if (lab === 'blunder') s.blunders++;
     if (lab === 'mistake' || lab === 'miss') s.mistakes++;
     if (lab === 'inaccuracy') s.inaccuracies++;
   });
+  // accSum / moves gives the phase accuracy (kept in this form for the callers that add phases up)
+  for (const ph of Object.keys(out)) out[ph].accSum = out[ph].moves ? combineAcc(per[ph]) * out[ph].moves : 0;
   return out;
 }

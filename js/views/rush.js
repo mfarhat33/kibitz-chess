@@ -5,7 +5,8 @@ import * as store from '../store.js';
 import { icons, esc, $, sound, fmtClock, timeAgo } from '../ui.js';
 import { pickPuzzle, loadIndex, loadBucket, bucketOf } from '../puzzle-data.js';
 import { PuzzlePlayer } from '../puzzle-player.js';
-import { puzzleTabs } from './puzzles.js';
+import { puzzleTabs, analysePuzzle } from './puzzles.js';
+import { themeName } from '../themes.js';
 
 const MODES = { 3: 180000, 5: 300000, 0: null }; // 0 = Survival: no clock, the run ends on the third mistake
 const modeName = (m) => (+m === 0 ? 'Survival' : `${m} minutes`);
@@ -128,7 +129,7 @@ function run(root, mode) {
       },
       onWrong: (pl) => {
         strikes++;
-        results.push({ ok: false, rating: p.rating });
+        results.push({ ok: false, rating: p.rating, p });
         logAttempt(p, 0);
         sound('bad');
         renderHud();
@@ -172,12 +173,15 @@ function run(root, mode) {
         <div class="${isBest && score > 0 ? 'status ok' : 'muted'}" style="justify-content:center">${isBest && score > 0 ? `New best for ${modeName(mode)}!` : `Best: ${d.best[mode] ?? 0}`}</div>
         <div class="small muted">Hardest puzzle reached: ${maxRating || '—'}</div>
         <div class="rush-track" style="justify-content:center">${results.map(r => `<i class="${r.ok ? '' : 'x'}" title="${r.rating}"></i>`).join('')}</div>
+        ${results.some(r => !r.ok) ? `<div class="list" style="text-align:left"><div class="stat-label">Missed puzzles</div>${results.filter(r => !r.ok).map((r, i) => `<div class="list-item"><div class="grow"><div class="t">Rated ${Number(r.rating) || '?'}</div><div class="s">${esc((r.p?.themes || []).slice(0, 3).map(themeName).join(', '))}</div></div><button class="btn small" type="button" data-miss="${i}">${icons.search} Analyse</button></div>`).join('')}</div>` : ''}
         <div class="grid-2">
           <button class="btn primary" id="r-again" type="button">${icons.retry} Play again</button>
           <button class="btn" id="r-back" type="button">${icons.list} Rush menu</button>
         </div>
       </section>`;
     $('#r-again', side).addEventListener('click', () => { board.destroy(); run(root, mode); });
+    const missed = results.filter(r => !r.ok);
+    side.querySelectorAll('[data-miss]').forEach(b => b.addEventListener('click', () => { const r = missed[+b.dataset.miss]; if (r?.p) analysePuzzle(r.p); }));
     $('#r-back', side).addEventListener('click', () => { board.destroy(); setup(root); });
   }
 

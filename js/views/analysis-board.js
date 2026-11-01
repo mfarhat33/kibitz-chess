@@ -5,9 +5,9 @@ import { Chess, dests, checkSquare, uciToMove, uciLineToSan, formatLine, START_F
 import { getEngine, formatScore, toWhite } from '../engine.js';
 import { winPct } from '../analysis.js';
 import * as store from '../store.js';
-import { icons, esc, toast, dialog, $, moveSound, downloadFile, scrollToBoard, fig } from '../ui.js';
+import { icons, esc, toast, dialog, confirm, $, moveSound, downloadFile, scrollToBoard, fig } from '../ui.js';
 import { loadOpenings, openingOf } from '../openings-data.js';
-import { playTabs, playFromPosition } from './tabs.js';
+import { playTabs, playFromPosition, isRichTree } from './tabs.js';
 import { MoveTree, NAGS } from '../movetree.js';
 
 let ctx = null;
@@ -58,6 +58,7 @@ export async function mount(root, params) {
           <button class="btn" id="a-last" type="button" aria-label="End of this line">${icons.last}</button>
           <button class="btn" id="a-flip" type="button" aria-label="Flip board">${icons.flip}</button>
         </div>
+        <div class="mobile-only" style="margin:4px -0px 0"><div class="moves-inline" id="a-strip" aria-label="Current line"></div></div>
       </div>
       <div class="side-col">
         <section class="card stack hidden" id="a-editor"></section>
@@ -143,6 +144,18 @@ export async function mount(root, params) {
     const op = tree.startFen === START_FEN ? openingOf(tree.ucis(cur)) : null;
     $('#a-opening', root).textContent = op ? `${op.eco} ${op.name}` : '';
     $('#a-review', root).disabled = tree.mainLine().length < 2;
+    // phones: the line you are on, right under the board
+    const strip = $('#a-strip', root);
+    if (strip) {
+      const line = tree.path(tree.lineEnd(cur));
+      strip.innerHTML = line.length ? line.map((n) => {
+        const [, turn, , , , full] = n.parent.fen.split(' ');
+        const no = turn === 'w' ? `<span class="n">${full}.</span>` : n === line[0] ? `<span class="n">${full}...</span>` : '';
+        return `${no}<span class="mvi${n === cur ? ' cur' : ''}" data-id="${n.id}">${esc(fig(n.san))}${n.nag ? esc(n.nag) : ''}</span>`;
+      }).join('') : '<span class="muted small">Moves appear here.</span>';
+      const c = strip.querySelector('.cur');
+      strip.scrollLeft = c ? Math.max(0, c.offsetLeft - strip.clientWidth / 2) : 0;
+    }
     $('#a-headers', root).textContent = headers ? `${headers.White || '?'} vs ${headers.Black || '?'}${headers.Result ? ` · ${headers.Result}` : ''}${headers.Date ? ` · ${headers.Date}` : ''}` : '';
   }
   // tools for the current move: annotation, comment, promote / delete side line
@@ -226,12 +239,25 @@ export async function mount(root, params) {
       $('#a-pv', root).innerHTML = lines.slice(0, n).map((l, i) => {
         const s = toWhite(l, c.turn());
         const sans = uciLineToSan(fen, l.pv, 10);
-        return `<button class="btn small block" type="button" data-pv="${i}" style="justify-content:flex-start;white-space:normal;text-align:left;min-height:38px;height:auto;padding:6px 10px">
-          <b class="mono" style="min-width:52px">${formatScore(s)}</b><span class="small">${esc(fig(formatLine(fen, sans)))}</span></button>`;
+        // every move in the line can be clicked: it plays the line up to that move
+        const [, turn0, , , , full0] = fen.split(' ');
+        let no = +full0, white = turn0 === 'w';
+        const toks = sans.map((san, k) => {
+          const num = white ? `${no}. ` : k === 0 ? `${no}... ` : '';
+          if (!white) no++;
+          white = !white;
+          return `${num}<span class="pvm" data-pv="${i}" data-k="${k}">${esc(fig(san))}</span>`;
+        }).join(' ');
+        return `<div class="pv-line" data-pv="${i}"><b class="mono" style="min-width:52px">${formatScore(s)}</b><span class="small">${toks}</span></div>`;
       }).join('');
-      $('#a-pv', root).querySelectorAll('[data-pv]').forEach(b => b.addEventListener('click', () => {
+      $('#a-pv', root).querySelectorAll('.pv-line').forEach(b => b.addEventListener('click', (e) => {
         const l = lines[+b.dataset.pv];
-        if (l?.pv[0]) playMove(l.pv[0]);
+        if (!l?.pv?.length) return;
+        const m = e.target.closest('.pvm');
+        const upto = m ? +m.dataset.k : 0;
+        let n = cur;
+        for (const u of l.pv.slice(0, upto + 1)) { const c = tree.add(n, u); if (!c) break; n = c; }
+        if (n !== cur) { cur = n; moveSound({ captured: /x/.test(n.san) }, new Chess(n.fen)); update(); }
       }));
       setBar(toWhite(lines[0], c.turn()));
       const arrows = lines.slice(0, n).map((l, i) => { const m = uciToMove(l.pv[0]); return { from: m.from, to: m.to, color: i === 0 ? 'rgba(16,150,110,.8)' : 'rgba(16,150,110,.35)', width: i === 0 ? 0.16 : 0.11 }; });
@@ -272,10 +298,14 @@ export async function mount(root, params) {
     });
     if (!res || !res.trim()) return;
     const text = res.trim();
-    const looksFen = /^[rnbqkpRNBQKP1-8/]+ [wb] /.test(text);
+    // a FEN, possibly without the castling / en passant / move counters
+    const looksFen = /^[rnbqkpRNBQKP1-8]+(\/[rnbqkpRNBQKP1-8]+){7}(\s+[wb])?(\s|$)/.test(text);
+    if (!(await keepWork())) return;
     try {
       if (looksFen) {
-        tree = new MoveTree(new Chess(text).fen()); cur = tree.root; headers = null;
+        const parts = text.split(/\s+/);
+        const full = [parts[0], parts[1] || 'w', parts[2] || '-', parts[3] || '-', parts[4] || '0', parts[5] || '1'].join(' ');
+        tree = new MoveTree(new Chess(full).fen()); cur = tree.root; headers = null;
         toast('Position loaded');
       } else {
         const r = MoveTree.fromPgn(text);
@@ -289,6 +319,14 @@ export async function mount(root, params) {
     } catch (err) {
       dialog({ title: 'Could not read that', body: `<p>${esc(looksFen ? 'That FEN is not a legal position.' : 'That PGN could not be parsed. Check that the moves are legal and in standard notation.')}</p><p class="tiny muted">${esc(err.message || '')}</p>` });
     }
+  }
+
+  // clock times from a pasted chess.com / Lichess PGN, so the review can show time per move
+  function clocksOf(end) {
+    const path = tree.path(end);
+    if (path.filter(n => Number.isFinite(n.clk)).length < Math.min(4, path.length)) return {};
+    const tcm = /^(\d+)\+(\d+)$/.exec(headers?.TimeControl || '');
+    return { moveClocks: path.map(n => (Number.isFinite(n.clk) ? n.clk : null)), tcBase: tcm ? +tcm[1] * 1000 : null, tcInc: tcm ? +tcm[2] * 1000 : 0 };
   }
 
   async function reviewGame() {
@@ -319,11 +357,13 @@ export async function mount(root, params) {
       tc: headers?.TimeControl || null, moves: line, sans,
       result, reason: c.isCheckmate() ? 'checkmate' : 'imported game', userResult,
       opening: op ? { eco: op.eco, name: op.name } : null, takebacks: 0, hints: 0, review: null,
+      ...clocksOf(end),
     });
     location.hash = '#/review/' + id;
   }
 
   $('#a-moves', root).addEventListener('click', (e) => { const m = e.target.closest('.tm[data-id]'); if (m && !editing) goTo(tree.get(+m.dataset.id)); });
+  $('#a-strip', root)?.addEventListener('click', (e) => { const m = e.target.closest('[data-id]'); if (m && !editing) goTo(tree.get(+m.dataset.id)); });
   $('#a-first', root).addEventListener('click', () => goTo(tree.root));
   $('#a-back', root).addEventListener('click', () => goTo(cur.parent));
   $('#a-fwd', root).addEventListener('click', () => goTo(cur.children[0]));
@@ -334,7 +374,12 @@ export async function mount(root, params) {
   $('#a-play', root).addEventListener('click', async () => {
     if ((await playFromPosition(cur.fen)) === 'over') toast('The game is over in this position');
   });
-  $('#a-clear', root).addEventListener('click', () => { tree = new MoveTree(); cur = tree.root; headers = null; update(); });
+  $('#a-clear', root).addEventListener('click', async () => { if (!(await keepWork())) return; tree = new MoveTree(); cur = tree.root; headers = null; update(); });
+  // asks before replacing a board that has side lines or comments
+  async function keepWork() {
+    if (!isRichTree(tree.toJSON())) return true;
+    return confirm('Replace this analysis?', '<p class="muted">This board has side lines or comments that will be replaced. Copy or download the PGN first if you want to keep them.</p>', 'Replace', true);
+  }
   $('#a-copyfen', root).addEventListener('click', () => copyText(cur.fen, 'FEN copied'));
   $('#a-copypgn', root).addEventListener('click', () => copyText(pgnText(), 'PGN copied'));
   $('#a-dlpgn', root).addEventListener('click', () => downloadFile('kibitz-analysis.pgn', pgnText(), 'application/x-chess-pgn'));

@@ -687,3 +687,12 @@ a.icon-btn { color: var(--text); }
 .coord-moves { display: flex; align-items: center; gap: 10px; text-align: left; }
 .coord-moves .stat-label { white-space: nowrap; }
 .kb-sq.coord-target { background: rgba(240, 170, 20, .55); box-shadow: inset 0 0 0 4px rgba(214, 120, 0, .95); }
+.coach { min-height: 44px; padding: 4px 6px 4px 10px; font-size: .85rem; line-height: 1.25; }
+.coach .q { flex: none; }
+.pv-line { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; line-height: 1.6; }
+.pv-line:hover { background: var(--surface-2); }
+.pv-line .pvm { padding: 1px 3px; border-radius: 5px; font-weight: 600; }
+.pv-line .pvm:hover { background: var(--accent-soft); color: var(--accent); }
+.moves-inline .mvi { cursor: pointer; }
+.linklike { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
+.grid-2.grid-3 { grid-template-columns: repeat(3, 1fr); }

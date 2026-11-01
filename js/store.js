@@ -211,6 +211,14 @@ function sanitize(data) {
         sound: v?.sound !== false, coords: v?.coords !== false, animation: v?.animation !== false, autoQueen: v?.autoQueen === true, playEval: v?.playEval === true, showThreats: v?.showThreats === true, coach: v?.coach === true, reviewLines: v?.reviewLines === true, figurine: v?.figurine === true, boardSize: ['s', 'm', 'l'].includes(v?.boardSize) ? v.boardSize : 'm', botChat: v?.botChat !== false, showDests: v?.showDests !== false, premoves: v?.premoves !== false, lastMove: v?.lastMove !== false,
         reviewDepth: ['fast', 'standard', 'deep'].includes(v?.reviewDepth) ? v.reviewDepth : 'standard',
       }; break;
+      case 'analysis.board': {
+        // the analysis board with its side lines and comments; checked again when it is opened
+        const okTree = v?.tree && typeof v.tree === 'object' && typeof v.tree.f === 'string' && Array.isArray(v.tree.k || []);
+        if (okTree && JSON.stringify(v).length < 500000) {
+          out[k] = { tree: v.tree, at: Array.isArray(v.at) ? v.at.map(x => num(x)).slice(0, 2000) : [], headers: v.headers && typeof v.headers === 'object' ? Object.fromEntries(Object.entries(v.headers).slice(0, 30).map(([a, b]) => [str(a, 40), str(String(b ?? ''), 200)])) : null, orientation: v.orientation === 'black' ? 'black' : 'white' };
+        }
+        break;
+      }
       default: break; // unknown keys (and in-progress state) are not imported
     }
   }

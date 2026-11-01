@@ -10,7 +10,8 @@ export function mount(root) {
   const games = store.allGames();
   const imp = { site: 'chesscom', user: '', ...store.get('import.prefs', {}) };
   const cur = store.get('play.current');
-  const flt = { q: '', res: 'all', kind: 'all', ...store.get('games.filter', {}) };
+  // filters start fresh on each visit so a new game is never hidden by an old filter
+  const flt = { q: '', res: 'all', kind: 'all', color: 'all' };
   root.innerHTML = `
     ${playTabs('games')}
     <div class="page stack">
@@ -29,6 +30,9 @@ export function mount(root) {
           <div class="chips" id="g-res" role="group" aria-label="Result">
             ${[['all', 'All'], ['win', 'Wins'], ['draw', 'Draws'], ['loss', 'Losses']].map(([v, l]) => `<button type="button" class="chip" data-v="${v}">${l}</button>`).join('')}
           </div>
+          <div class="chips" id="g-color" role="group" aria-label="Colour">
+            ${[['all', 'Both colours'], ['w', 'As White'], ['b', 'As Black']].map(([v, l]) => `<button type="button" class="chip" data-v="${v}">${l}</button>`).join('')}
+          </div>
           <div class="chips" id="g-kind" role="group" aria-label="Type">
             ${[['all', 'All games'], ['bot', 'Vs bots'], ['imported', 'Imported'], ['friend', 'With a friend'], ['todo', 'Not reviewed']].map(([v, l]) => `<button type="button" class="chip" data-v="${v}">${l}</button>`).join('')}
           </div>
@@ -44,6 +48,7 @@ export function mount(root) {
 
 function matches(g, f) {
   if (f.res !== 'all' && g.userResult !== f.res) return false;
+  if (f.color !== 'all' && (g.spectator || g.userColor !== f.color)) return false;
   if (f.kind === 'bot' && (g.imported || g.friend)) return false;
   if (f.kind === 'imported' && !g.imported) return false;
   if (f.kind === 'friend' && !g.friend) return false;
@@ -60,8 +65,8 @@ function wireFilters(root, games, flt) {
   const list = $('#g-list', root);
   const mark = (sel, v) => root.querySelectorAll(`${sel} button`).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
   const draw = () => {
-    store.set('games.filter', flt);
     mark('#g-res', flt.res);
+    mark('#g-color', flt.color);
     mark('#g-kind', flt.kind);
     const shown = games.filter(g => matches(g, flt));
     const LIMIT = 200;
@@ -72,6 +77,7 @@ function wireFilters(root, games, flt) {
   $('#g-q', root).addEventListener('input', (e) => { flt.q = e.target.value; draw(); });
   $('#g-res', root).addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { flt.res = b.dataset.v; draw(); } });
   $('#g-kind', root).addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { flt.kind = b.dataset.v; draw(); } });
+  $('#g-color', root).addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { flt.color = b.dataset.v; draw(); } });
   draw();
 }
 
