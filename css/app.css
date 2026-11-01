@@ -414,7 +414,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 /* move list */
 .moves {
   display: grid; grid-template-columns: 36px 1fr 1fr; gap: 2px 4px;
-  max-height: 260px; overflow-y: auto; font-size: .92rem; align-content: start;
+  max-height: 260px; overflow-y: auto; position: relative; font-size: .92rem; align-content: start;
 }
 .moves .num { color: var(--muted); text-align: right; padding: 4px 4px 4px 0; font-variant-numeric: tabular-nums; }
 .moves .mv { padding: 4px 7px; border-radius: 7px; cursor: pointer; display: flex; align-items: center; gap: 5px; white-space: nowrap; }
@@ -588,4 +588,29 @@ a.icon-btn { color: var(--text); }
   .stage > .board-col .board-shell { width: 100%; }
   .stage > .side-col { padding: 8px 12px 0 0; }
   .evalbar-h { margin: 0 0 6px; }
+}
+
+/* Play: move browsing and the optional eval bar */
+.play-stage.evaloff .evalbar-h, .play-stage.evaloff .evalbar-v { display: none !important; }
+.play-stage.evaloff .board-and-bar { grid-template-columns: 1fr; }
+.play-nav { padding-top: 6px; }
+.play-nav .btn { min-height: 40px; }
+.play-nav .btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.status.viewing { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 6px 6px 14px; background: var(--accent-soft); color: var(--accent); }
+.status.viewing .btn { flex: none; }
+.status.viewing .btn svg { width: 16px; height: 16px; }
+.moves-inline .mvi, .moves .mv[data-i] { cursor: pointer; }
+.play-stage .evalbar-h { margin-top: 2px; }
+@media (min-width: 900px) {
+  .play-stage.evaloff .review-nav { padding-left: 0; }
+  .play-stage.with-evalbar .player-bar { padding-left: 36px; }
+  .play-stage { --board: min(calc(100dvh - var(--top-h) - 214px), 640px); }
+}
+@media (max-width: 899px) {
+  .play-stage > .board-col .board-shell { width: min(100%, calc(100dvh - var(--top-h) - var(--nav-h) - 226px)); }
+  .play-stage.with-evalbar > .board-col .board-shell { width: min(100%, calc(100dvh - var(--top-h) - var(--nav-h) - 244px)); }
+}
+@media (max-width: 899px) and (orientation: landscape) and (max-height: 600px) {
+  .play-stage > .board-col .board-shell { width: 100%; }
+  .play-stage > .board-col { width: calc(100dvh - var(--top-h) - var(--nav-h) - 110px); }
 }

@@ -1,7 +1,8 @@
 // Play vs bots: setup, game loop, clocks, hints, takebacks. Finished games are saved for review.
 import { Board, pieceUrl } from '../board.js';
 import { Chess, dests, checkSquare, playUci, gameOverInfo, canMate, material, colorName, uciToMove, START_FEN } from '../chessutil.js';
-import { getEngine } from '../engine.js';
+import { getEngine, toWhite, formatScore } from '../engine.js';
+import { winPct } from '../analysis.js';
 import { LEVELS, DEFAULT_LEVEL, chooseBotMove, levelLabel } from '../bot.js';
 import * as store from '../store.js';
 import { playTabs } from './tabs.js';
@@ -139,11 +140,22 @@ function gameView(root, state) {
   const settings = store.getSettings();
 
   root.innerHTML = `
-    <div class="stage">
+    <div class="stage play-stage${settings.playEval ? ' with-evalbar' : ' evaloff'}">
       <div class="board-col">
         <div class="player-bar" id="bar-top"></div>
-        <div class="board-shell"><div id="board"></div></div>
+        <div class="evalbar-h" aria-hidden="true"><i id="ebh" style="width:50%"></i></div>
+        <div class="board-and-bar">
+          <div class="evalbar-v" id="ebv" aria-hidden="true"><i style="height:50%"></i><span></span></div>
+          <div class="board-shell"><div id="board"></div></div>
+        </div>
         <div class="player-bar" id="bar-bottom"></div>
+        <div class="review-nav play-nav">
+          <button class="btn" id="n-first" type="button" aria-label="First move">${icons.first}</button>
+          <button class="btn" id="n-prev" type="button" aria-label="Previous move">${icons.prev}</button>
+          <button class="btn" id="n-next" type="button" aria-label="Next move">${icons.next}</button>
+          <button class="btn" id="n-last" type="button" aria-label="Back to the current position">${icons.last}</button>
+          <button class="btn" id="n-eval" type="button" aria-label="Evaluation bar" title="Show who is winning" aria-pressed="${settings.playEval}">${icons.chart}</button>
+        </div>
       </div>
       <div class="side-col">
         <div class="status" id="status" role="status"></div>
@@ -186,6 +198,18 @@ function gameView(root, state) {
   let hintArrow = null;
   let engineState = 'loading';
   let alive = true;
+  // move browsing: null shows the live game, a number shows the position after that many moves
+  let view = null;
+  let evalOn = settings.playEval;
+  let evalEngine = null;
+  let evalToken = 0;
+  const evalCache = new Map();
+
+  function chessAt(ply) {
+    const c = new Chess(startFen);
+    for (let i = 0; i < ply; i++) playUci(c, state.moves[i]);
+    return c;
+  }
 
   const clockActive = () => !!tc && state.moves.length >= 2 && !state.over;
   const live = (c) => {
@@ -246,21 +270,26 @@ function gameView(root, state) {
     const shift = startFen.split(' ')[1] === 'b' ? 1 : 0;
     const no0 = +(startFen.split(' ')[5] || 1);
     let html = shift ? `<span class="n">${no0}...</span>` : '';
+    const curI = view == null ? sans.length - 1 : view - 1;
     sans.forEach((s, i) => {
       if ((i + shift) % 2 === 0) html += `<span class="n">${no0 + (i + shift) / 2}.</span>`;
-      html += `<span class="${i === sans.length - 1 ? 'cur' : ''}">${esc(s)}</span>`;
+      html += `<span class="mvi${i === curI ? ' cur' : ''}" data-i="${i}">${esc(s)}</span>`;
     });
     const strip = $('#moves-m', root);
     strip.innerHTML = html || '<span class="muted">No moves yet</span>';
-    strip.scrollLeft = strip.scrollWidth;
+    const curEl = strip.querySelector('.cur');
+    if (view == null || !curEl) strip.scrollLeft = strip.scrollWidth;
+    else strip.scrollLeft = Math.max(0, curEl.offsetLeft - strip.clientWidth / 2);
     let grid = shift ? `<span class="num">${no0}.</span><span class="mv muted">…</span>` : '';
     sans.forEach((s, i) => {
       if ((i + shift) % 2 === 0) grid += `<span class="num">${no0 + (i + shift) / 2}.</span>`;
-      grid += `<span class="mv${i === sans.length - 1 ? ' cur' : ''}">${esc(s)}</span>`;
+      grid += `<span class="mv${i === curI ? ' cur' : ''}" data-i="${i}">${esc(s)}</span>`;
     });
     const g = $('#moves', root);
     g.innerHTML = grid;
-    g.scrollTop = g.scrollHeight;
+    const gCur = g.querySelector('.cur');
+    if (view == null || !gCur) g.scrollTop = g.scrollHeight;
+    else if (gCur.offsetTop < g.scrollTop || gCur.offsetTop + gCur.offsetHeight > g.scrollTop + g.clientHeight) g.scrollTop = gCur.offsetTop - g.clientHeight / 2;
     const op = state.startFen ? null : openingOf(state.moves);
     const txt = op ? `${op.eco} · ${op.name}` : '';
     $('#opening', root).textContent = txt;
@@ -270,7 +299,12 @@ function gameView(root, state) {
   function setStatus() {
     const st = $('#status', root);
     st.className = 'status';
-    if (state.over) {
+    if (view != null) {
+      // browsing earlier moves: say where you are and how to get back
+      st.classList.add('viewing');
+      st.innerHTML = `${esc(view === 0 ? 'Starting position' : `After ${moveLabel(view - 1)}`)} <button class="btn small" id="b-live" type="button">Back to game ${icons.last}</button>`;
+      $('#b-live', st).addEventListener('click', () => goTo(state.moves.length));
+    } else if (state.over) {
       const r = userResult(state);
       st.classList.add(r === 'win' ? 'ok' : r === 'loss' ? 'bad' : 'info');
       st.textContent = resultText(state, level);
@@ -292,6 +326,22 @@ function gameView(root, state) {
   }
 
   function render(animate = true) {
+    if (view != null) {
+      // looking at an earlier position: nothing can be moved until you come back to the game
+      const c = chessAt(view);
+      const h = c.history({ verbose: true });
+      const m = h[h.length - 1];
+      board.setPosition(c.fen(), { lastMove: m ? [m.from, m.to] : null, check: checkSquare(c), animate });
+      board.setMovable({ color: null, dests: new Map() });
+      board.setPremovable({});
+      board.setArrows([]);
+      renderBars();
+      renderMoves();
+      setStatus();
+      renderNav();
+      updateEval(c, view);
+      return;
+    }
     board.setPosition(chess.fen(), { lastMove, check: checkSquare(chess), animate });
     const mine = !state.over && chess.turn() === user;
     board.setMovable({ color: mine ? colorName(user) : null, dests: mine ? dests(chess) : new Map() });
@@ -301,6 +351,86 @@ function gameView(root, state) {
     renderBars();
     renderMoves();
     setStatus();
+    renderNav();
+    updateEval(chess, state.moves.length);
+  }
+
+  function renderNav() {
+    const n = state.moves.length;
+    const at = view == null ? n : view;
+    $('#n-first', root).disabled = at === 0;
+    $('#n-prev', root).disabled = at === 0;
+    $('#n-next', root).disabled = at >= n;
+    $('#n-last', root).disabled = at >= n;
+    $('#n-last', root).classList.toggle('primary', view != null);
+  }
+
+  function moveLabel(i) {
+    const shift = startFen.split(' ')[1] === 'b' ? 1 : 0;
+    const no0 = +(startFen.split(' ')[5] || 1);
+    const k = i + shift;
+    return `${no0 + Math.floor(k / 2)}${k % 2 === 0 ? '.' : '...'} ${chess.history()[i] || ''}`;
+  }
+
+  function goTo(ply) {
+    const n = state.moves.length;
+    ply = Math.max(0, Math.min(n, ply));
+    const next = ply >= n ? null : ply;
+    if (next === view) return;
+    view = next;
+    render(true);
+  }
+
+  function setEvalBar(score, mateWinner) {
+    const flipped = board.orientation === 'black';
+    let w, label;
+    if (mateWinner) { w = mateWinner === 'w' ? 100 : 0; label = '#'; }
+    else if (!score) { w = 50; label = ''; }
+    else { w = winPct(score); label = formatScore(score).replace('+', '').replace(/^-0\.0$/, '0.0'); }
+    $('#ebh', root).style.width = w + '%';
+    const v = $('#ebv', root);
+    v.classList.toggle('flipped', flipped);
+    v.querySelector('i').style.height = w + '%';
+    const span = v.querySelector('span');
+    span.textContent = label;
+    const whiteAhead = w >= 50;
+    span.style.top = (whiteAhead !== flipped) ? 'auto' : '4px';
+    span.style.bottom = (whiteAhead !== flipped) ? '4px' : 'auto';
+    span.style.color = whiteAhead ? 'var(--eval-black)' : 'var(--eval-white)';
+  }
+
+  // the bar is optional; it uses its own engine so the bot and hints are never interrupted
+  function updateEval(c, ply) {
+    if (!evalOn) return;
+    const fen = c.fen();
+    if (c.isCheckmate()) { setEvalBar(null, c.turn() === 'w' ? 'b' : 'w'); return; }
+    if (c.isDraw() || c.isStalemate()) { setEvalBar({ cp: 0, mate: null }); return; }
+    if (evalCache.has(fen)) { setEvalBar(evalCache.get(fen)); return; }
+    evalEngine = evalEngine || getEngine('live');
+    const t = ++evalToken;
+    evalEngine.cancel();
+    const turn = c.turn();
+    const show = (lines) => {
+      if (!alive || t !== evalToken || !lines?.[0]) return;
+      setEvalBar(toWhite(lines[0], turn));
+    };
+    evalEngine.analyze(fen, { depth: 16, movetime: 1200, startFen, moves: state.moves.slice(0, ply), onInfo: show }).then(r => {
+      if (!alive || t !== evalToken || !r?.lines?.[0]) return;
+      const sc = toWhite(r.lines[0], turn);
+      evalCache.set(fen, sc);
+      setEvalBar(sc);
+    });
+  }
+
+  function toggleEval() {
+    evalOn = !evalOn;
+    store.setSettings({ playEval: evalOn });
+    const stage = root.querySelector('.play-stage');
+    stage.classList.toggle('with-evalbar', evalOn);
+    stage.classList.toggle('evaloff', !evalOn);
+    $('#n-eval', root).setAttribute('aria-pressed', String(evalOn));
+    if (evalOn) { setEvalBar(null); render(false); }
+    else { evalToken++; evalEngine?.cancel(); }
   }
 
   function charge(color) {
@@ -323,6 +453,7 @@ function gameView(root, state) {
       state.clockLog.length = state.moves.length + 1;
     }
     if (state.moves.length === 2) turnStart = performance.now();
+    view = null;
     lastMove = [m.from, m.to];
     hintArrow = null;
     moveSound(m, chess);
@@ -428,6 +559,7 @@ function gameView(root, state) {
 
   async function hint() {
     if (state.over || chess.turn() !== user) return;
+    if (view != null) { view = null; render(false); }
     const fen = chess.fen();
     const btn = $('#b-hint', root);
     btn.disabled = true;
@@ -445,6 +577,7 @@ function gameView(root, state) {
 
   function takeback() {
     if (state.over) return;
+    view = null;
     let n;
     if (thinking || chess.turn() === bot) {
       thinkToken++;
@@ -487,7 +620,29 @@ function gameView(root, state) {
 
   $('#b-hint', root).addEventListener('click', hint);
   $('#b-undo', root).addEventListener('click', takeback);
-  $('#b-flip', root).addEventListener('click', () => { board.flip(); renderBars(); });
+  $('#b-flip', root).addEventListener('click', () => { board.flip(); renderBars(); render(false); });
+  $('#n-first', root).addEventListener('click', () => goTo(0));
+  $('#n-prev', root).addEventListener('click', () => goTo((view == null ? state.moves.length : view) - 1));
+  $('#n-next', root).addEventListener('click', () => goTo((view == null ? state.moves.length : view) + 1));
+  $('#n-last', root).addEventListener('click', () => goTo(state.moves.length));
+  $('#n-eval', root).addEventListener('click', toggleEval);
+  const onMoveClick = (e) => {
+    const el = e.target.closest('[data-i]');
+    if (el) goTo(+el.dataset.i + 1);
+  };
+  $('#moves', root).addEventListener('click', onMoveClick);
+  $('#moves-m', root).addEventListener('click', onMoveClick);
+  const onKey = (e) => {
+    if (e.target.closest?.('input,textarea,select,dialog') || e.altKey || e.ctrlKey || e.metaKey) return;
+    const at = view == null ? state.moves.length : view;
+    if (e.key === 'ArrowLeft') goTo(at - 1);
+    else if (e.key === 'ArrowRight') goTo(at + 1);
+    else if (e.key === 'ArrowUp') goTo(0);
+    else if (e.key === 'ArrowDown') goTo(state.moves.length);
+    else return;
+    e.preventDefault();
+  };
+  document.addEventListener('keydown', onKey);
   $('#b-resign', root).addEventListener('click', resign);
 
   let ticks = 0;
@@ -516,6 +671,9 @@ function gameView(root, state) {
       thinkToken++;
       botEngine.cancel();
       hintEngine.cancel();
+      evalToken++;
+      evalEngine?.cancel();
+      document.removeEventListener('keydown', onKey);
       window.removeEventListener('pagehide', onHide);
       board.destroy();
     },
