@@ -7,6 +7,7 @@ import * as store from '../store.js';
 import { icons, esc, toast, dialog, $, moveSound } from '../ui.js';
 import { loadOpenings, openingOf, continuations, isBook, searchLines } from '../openings-data.js';
 import { addLine, trainerTabs } from './trainer.js';
+import { playFromPosition } from './tabs.js';
 
 let ctx = null;
 export function unmount() { ctx?.destroy(); ctx = null; }
@@ -43,6 +44,10 @@ export async function mount(root, params, isCurrent = () => true) {
       </div>
       <div class="side-col">
         <section class="card stack" id="o-name"></section>
+        <div class="grid-2">
+          <button class="btn" id="o-play" type="button">${icons.start} Play vs bot from here</button>
+          <button class="btn" id="o-analyse" type="button">${icons.search} Analysis board</button>
+        </div>
         <section class="card stack" id="o-engine"></section>
         <section class="card" id="o-book-card"><div class="row between"><h3 style="margin:0">Book moves</h3><span class="tiny muted">from the opening database</span></div><div class="list" id="o-book" style="margin-top:4px"></div></section>
         <section class="card stack">
@@ -189,6 +194,13 @@ export async function mount(root, params, isCurrent = () => true) {
     store.set('explorer.orientation', board.orientation);
     const c = chessAt(ply);
     runEngine(c.fen(), c.turn());
+  });
+  $('#o-play', root).addEventListener('click', async () => {
+    if ((await playFromPosition(chessAt(ply).fen())) === 'over') toast('The game is over in this position');
+  });
+  $('#o-analyse', root).addEventListener('click', () => {
+    store.set('analysis.board', { startFen: new Chess().fen(), line: line.slice(0, ply), ply, headers: null, orientation: board.orientation });
+    location.hash = '#/analysis';
   });
   $('#o-train', root).addEventListener('click', async () => {
     const moves = line.slice(0, ply);

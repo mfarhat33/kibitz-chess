@@ -5,6 +5,7 @@ import { icons, esc, toast, $, sound } from '../ui.js';
 import { pickPuzzle, loadIndex, prefetch, loadBucket } from '../puzzle-data.js';
 import { PuzzlePlayer, updateRating, START_RATING } from '../puzzle-player.js';
 import { themeName } from '../themes.js';
+import { Chess, playUci, checkSquare } from '../chessutil.js';
 
 let ctx = null;
 export function unmount() { ctx?.destroy(); ctx = null; }
@@ -90,6 +91,7 @@ async function dailyView(root, isCurrent) {
         <a class="btn primary" href="#/puzzles">${icons.next} Rated puzzles</a>
       </div>`;
     $('#p-analyse', el).addEventListener('click', () => analysePuzzle(pz));
+    solutionStepper(el, board, pz);
   };
   const player = new PuzzlePlayer(board, pz, {
     onStep: (p) => { if (p.chess.turn() === p.solver) status(`Find the best move for <b>${p.solverName}</b>`); },
@@ -189,6 +191,7 @@ export async function mount(root, params = [], isCurrent = () => true) {
       </div>`;
     $('#p-next2', el).addEventListener('click', () => next());
     $('#p-analyse', el).addEventListener('click', () => analysePuzzle(puzzle));
+    solutionStepper(el, board, puzzle);
     $('#p-next', root).querySelector('span').textContent = 'Next';
   }
 
@@ -293,4 +296,39 @@ function analysePuzzle(pz) {
   const solverWhite = pz.fen.split(' ')[1] === 'b'; // the first move is the opponent's
   store.set('analysis.board', { startFen: pz.fen, line: pz.moves.slice(), ply: 1, headers: null, orientation: solverWhite ? 'white' : 'black' });
   location.hash = '#/analysis';
+}
+
+/**
+ * After a puzzle ends: step back and forth through the whole solution on the board (buttons and ← → keys).
+ * The listener removes itself when the card is replaced or the page changes.
+ */
+function solutionStepper(el, board, pz) {
+  const fens = [pz.fen];
+  const lasts = [null];
+  const c = new Chess(pz.fen);
+  for (const u of pz.moves) { const m = playUci(c, u); if (!m) break; fens.push(c.fen()); lasts.push([m.from, m.to]); }
+  let k = fens.length - 1;
+  const nav = document.createElement('div');
+  nav.className = 'row nowrap';
+  nav.innerHTML = `<span class="small muted grow">Step through the solution</span>
+    <button class="btn small" type="button" data-s="-1" aria-label="Back one move">${icons.prev}</button>
+    <button class="btn small" type="button" data-s="1" aria-label="Forward one move">${icons.next}</button>`;
+  el.insertBefore(nav, el.children[2] || null);
+  const show = (n) => {
+    k = Math.max(1, Math.min(fens.length - 1, n));
+    const pos = new Chess(fens[k]);
+    board.setPosition(fens[k], { lastMove: lasts[k], check: checkSquare(pos) });
+    board.setMovable({});
+    board.setArrows([]);
+    nav.querySelector('[data-s="-1"]').disabled = k <= 1;
+    nav.querySelector('[data-s="1"]').disabled = k >= fens.length - 1;
+  };
+  nav.addEventListener('click', (e) => { const b = e.target.closest('[data-s]'); if (b) show(k + +b.dataset.s); });
+  const onKey = (e) => {
+    if (!nav.isConnected || el.classList.contains('hidden')) { document.removeEventListener('keydown', onKey); return; }
+    if (e.target.closest?.('input,textarea,select,dialog')) return;
+    if (e.key === 'ArrowLeft') { show(k - 1); e.preventDefault(); } else if (e.key === 'ArrowRight') { show(k + 1); e.preventDefault(); }
+  };
+  document.addEventListener('keydown', onKey);
+  nav.querySelector('[data-s="1"]').disabled = true;
 }

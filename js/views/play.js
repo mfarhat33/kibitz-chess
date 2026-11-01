@@ -2,7 +2,7 @@
 import { Board, pieceUrl } from '../board.js';
 import { Chess, dests, checkSquare, playUci, gameOverInfo, canMate, material, colorName, uciToMove, START_FEN } from '../chessutil.js';
 import { getEngine, toWhite, formatScore } from '../engine.js';
-import { winPct } from '../analysis.js';
+import { winPct, gradeMove, LABEL_TEXT, LABEL_GLYPH } from '../analysis.js';
 import { LEVELS, DEFAULT_LEVEL, chooseBotMove, levelLabel } from '../bot.js';
 import * as store from '../store.js';
 import { playTabs } from './tabs.js';
@@ -86,6 +86,7 @@ function setupView(root) {
           <div class="field" id="assist"><span class="label">Help during the game</span>
             <label class="toggle"><span>Evaluation bar (who is winning)</span><input type="checkbox" id="as-eval" ${settings.playEval ? 'checked' : ''}></label>
             <label class="toggle"><span>Show threats (your pieces that can be won)</span><input type="checkbox" id="as-threats" ${settings.showThreats ? 'checked' : ''}></label>
+            <label class="toggle"><span>Coach: warn me right after a mistake</span><input type="checkbox" id="as-coach" ${settings.coach ? 'checked' : ''}></label>
             <label class="toggle"><span>Bot chat</span><input type="checkbox" id="as-chat" ${settings.botChat !== false ? 'checked' : ''}></label>
           </div>
           <button class="btn primary block" id="start" type="button">${icons.start} Start game</button>
@@ -116,6 +117,7 @@ function setupView(root) {
     $('#friend-opts', root).classList.toggle('hidden', mode !== 'friend');
     $('#as-threats', root).closest('label').classList.toggle('hidden', mode !== 'bot');
     $('#as-chat', root).closest('label').classList.toggle('hidden', mode !== 'bot');
+    $('#as-coach', root).closest('label').classList.toggle('hidden', mode !== 'bot');
     $('#setup-note', root).classList.toggle('hidden', mode !== 'bot');
   };
   const showTc = () => { pick('#tc', tc); $('#tc-custom', root).classList.toggle('hidden', tc !== 'custom'); };
@@ -130,7 +132,7 @@ function setupView(root) {
     const custom = { min: clamp($('#tc-min', root).value, 1, 180, 10), inc: clamp($('#tc-inc', root).value, 0, 60, 0) };
     const autoflip = $('#autoflip', root).checked;
     store.set('play.prefs', { level: +lv.value, color, tc, mode, custom, autoflip });
-    store.setSettings({ playEval: $('#as-eval', root).checked, showThreats: $('#as-threats', root).checked, botChat: $('#as-chat', root).checked });
+    store.setSettings({ playEval: $('#as-eval', root).checked, showThreats: $('#as-threats', root).checked, botChat: $('#as-chat', root).checked, coach: $('#as-coach', root).checked });
     board.destroy();
     startNew(root, { level: +lv.value, color: mode === 'friend' ? 'w' : color, tc, startFen: fromFen || null, mode, custom, autoflip });
   });
@@ -206,11 +208,12 @@ function gameView(root, state) {
           <button class="btn" id="n-prev" type="button" aria-label="Previous move">${icons.prev}</button>
           <button class="btn" id="n-next" type="button" aria-label="Next move">${icons.next}</button>
           <button class="btn" id="n-last" type="button" aria-label="Back to the current position">${icons.last}</button>
-          <button class="btn" id="n-eval" type="button" aria-label="Evaluation bar" title="Show who is winning" aria-pressed="${settings.playEval}">${icons.chart}</button>
-          ${friend ? '' : `<button class="btn" id="n-threats" type="button" aria-label="Show threats" title="Highlight your pieces that can be won" aria-pressed="${!!settings.showThreats}">${icons.target}</button>`}
+          <button class="btn labelled" id="n-eval" type="button" title="Show who is winning" aria-pressed="${settings.playEval}">${icons.chart}<span>Eval</span></button>
+          ${friend ? '' : `<button class="btn labelled" id="n-threats" type="button" title="Highlight your pieces that can be won" aria-pressed="${!!settings.showThreats}">${icons.target}<span>Threats</span></button>`}
         </div>
       </div>
       <div class="side-col">
+        <div class="coach hidden" id="coach" role="status" aria-live="polite"></div>
         <div class="status" id="status" role="status"></div>
         <div class="btn-row" id="controls">
           <button class="btn" id="b-hint" type="button">${icons.hint}<span>Hint</span></button>
@@ -256,6 +259,11 @@ function gameView(root, state) {
   let engineState = 'loading';
   let alive = true;
   let threatsOn = !friend && !!settings.showThreats;
+  const coachOn = !friend && !!settings.coach;
+  let coachEngine = null;
+  const coachCache = new Map();
+  let coachPly = -1;
+  let lowWarned = false;
   let chatTimer = 0;
   let lastChatPly = -9;
   let drawBlockedUntil = 0;
@@ -512,6 +520,7 @@ function gameView(root, state) {
 
   function applyMove(uci) {
     const color = chess.turn();
+    const fenBefore = chess.fen();
     const pending = color === bot ? board.premove : null;
     const m = playUci(chess, uci);
     if (!m) return false;
@@ -531,6 +540,7 @@ function gameView(root, state) {
     if (over) { finish(over.result, over.reason); return true; }
     if (friend && state.autoflip) board.setOrientation(colorName(chess.turn()));
     if (!friend) chatAfterMove(m, color);
+    if (coachOn && color === user) coachCheck(fenBefore, chess.fen(), uci, m.san, state.moves.length);
     save();
     render();
     if (chess.turn() === bot) botTurn();
@@ -605,6 +615,11 @@ function gameView(root, state) {
       takebacks: state.takebacks,
       hints: state.hints,
       review: null,
+      // remaining time after each move (ms), for "time per move" in the review
+      ...(tc && state.clockLog ? {
+        tcBase: tc.base, tcInc: tc.inc,
+        moveClocks: state.moves.map((_, i) => { const c = state.clockLog[i + 1]; const mover = new Chess(startFen).turn() === 'w' ? (i % 2 ? 'b' : 'w') : (i % 2 ? 'w' : 'b'); return c ? Math.max(0, Math.round(c[mover])) : null; }),
+      } : {}),
     };
     store.set('game:' + state.id, record);
     store.del('play.current');
@@ -665,6 +680,8 @@ function gameView(root, state) {
   function takeback() {
     if (state.over) return;
     view = null;
+    coachPly = -1;
+    hideCoach();
     let n;
     if (friend) n = 1;
     else if (thinking || chess.turn() === bot) {
@@ -746,6 +763,50 @@ function gameView(root, state) {
       say(pickLine(forBot > limit ? ['No thanks, I like my position.', "I think I'm better here. Let's play on!", 'Not yet!'] : ["It's too early for a draw. Let's play!", "Let's keep going a bit."]), true);
     }
   }
+
+  // ---------- coach: grade your move right away and offer a takeback after a mistake ----------
+  function coachEval(fen, ply) {
+    if (coachCache.has(fen)) return coachCache.get(fen);
+    coachEngine = coachEngine || getEngine('coach');
+    const c = new Chess(fen);
+    const turn = c.turn();
+    const pr = c.isCheckmate() ? Promise.resolve({ score: { mate: 0, win: turn === 'w' ? 'b' : 'w' }, best: null })
+      : c.isGameOver() ? Promise.resolve({ score: { cp: 0, mate: null }, best: null })
+      : coachEngine.analyze(fen, { depth: 13, movetime: 900, startFen, moves: state.moves.slice(0, ply) }).then(r => {
+        if (!r?.lines?.[0]) return null;
+        return { score: toWhite(r.lines[0], turn), best: r.lines[0].pv?.[0] || r.bestmove };
+      });
+    coachCache.set(fen, pr);
+    pr.then(v => { if (!v) coachCache.delete(fen); });
+    return pr;
+  }
+  async function coachCheck(before, after, uci, san, ply) {
+    coachPly = ply;
+    hideCoach();
+    const [b, a] = await Promise.all([coachEval(before, ply - 1), coachEval(after, ply)]);
+    if (!alive || state.over || coachPly !== ply || !b || !a) return;
+    const engineBest = b.best === uci;
+    const { label } = gradeMove(b.score, a.score, user, { engineBest, givesMate: new Chess(after).isCheckmate() });
+    if (!['blunder', 'mistake', 'miss'].includes(label)) return;
+    const bestSan = b.best && !engineBest ? (() => { try { return playUci(new Chess(before), b.best)?.san; } catch { return null; } })() : null;
+    const el = $('#coach', root);
+    el.className = `coach coach-${label}`;
+    el.innerHTML = `<i class="q q-${label}">${LABEL_GLYPH[label]}</i>
+      <div class="grow"><b>${esc(san)}</b> was ${label === 'miss' ? 'a missed chance' : `a ${LABEL_TEXT[label].toLowerCase()}`}.${bestSan ? ` Better was <b>${esc(bestSan)}</b>.` : ''}</div>
+      <button class="btn small primary" id="c-undo" type="button">${icons.undo} Take back</button>
+      <button class="btn small" id="c-hide" type="button" aria-label="Keep playing">${icons.x}</button>`;
+    sound('bad');
+    $('#c-hide', el).addEventListener('click', hideCoach);
+    $('#c-undo', el).addEventListener('click', () => {
+      hideCoach();
+      // undo back to just before that move (the bot's reply too, if it already came)
+      const n = state.moves.length - (ply - 1);
+      if (n < 1 || n > 2 || state.over) return;
+      if (b.best) { const bm = uciToMove(b.best); setTimeout(() => { hintArrow = { from: bm.from, to: bm.to, color: 'rgba(16,150,110,.85)' }; render(false); }, 50); }
+      takeback();
+    });
+  }
+  function hideCoach() { $('#coach', root)?.classList.add('hidden'); }
 
   // ---------- bot chat: short lines from the bot, shown in a bubble that fades ----------
   function pickLine(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -831,6 +892,8 @@ function gameView(root, state) {
     // unload saves are not guaranteed to finish, so keep the stored clock fresh
     if (++ticks % 30 === 0) save();
     const c = chess.turn();
+    // a warning beep when your own clock drops under 10% (max 20 s)
+    if (!friend && c === user && !lowWarned && tc && live(c) < Math.min(20000, tc.base * 0.1)) { lowWarned = true; sound('lowtime'); }
     if (live(c) <= 0) {
       state.clocks[c] = 0;
       const winner = c === 'w' ? 'b' : 'w';

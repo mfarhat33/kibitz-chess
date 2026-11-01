@@ -8,7 +8,7 @@ export async function fetchRecentGames(site, username, max = 20) {
   const user = username.trim().replace(/^@/, '');
   if (!/^[A-Za-z0-9_-]{2,30}$/.test(user)) throw new Error('That does not look like a valid username.');
   if (site === 'lichess') {
-    const url = `https://lichess.org/api/games/user/${encodeURIComponent(user)}?max=${max}&pgnInJson=true&perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence`;
+    const url = `https://lichess.org/api/games/user/${encodeURIComponent(user)}?max=${max}&pgnInJson=true&perfType=ultraBullet,bullet,blitz,rapid,classical,correspondence&clocks=true`;
     const res = await fetch(url, { headers: { Accept: 'application/x-ndjson' } });
     if (res.status === 404) throw new Error('No Lichess player with that name.');
     if (res.status === 429) throw new Error('Lichess is rate-limiting requests. Wait a minute and try again.');
@@ -49,7 +49,25 @@ export function parsePgn(pgn) {
   const headers = c.getHeaders();
   const start = headers.FEN && headers.SetUp === '1' ? new Chess(headers.FEN).fen() : START_FEN;
   const moves = c.history({ verbose: true }).map(m => m.from + m.to + (m.promotion || ''));
-  return { headers, startFen: start, moves, sans: c.history(), final: c };
+  return { headers, startFen: start, moves, sans: c.history(), final: c, moveClocks: clocksOf(c, start, moves) };
+}
+
+/** Remaining clock after each move from PGN [%clk h:mm:ss] comments (chess.com and Lichess both add them), or null. */
+function clocksOf(c, start, moves) {
+  let comments;
+  try { comments = c.getComments(); } catch { return null; }
+  if (!comments?.length) return null;
+  const byFen = new Map(comments.map(x => [x.fen, x.comment]));
+  const r = new Chess(start);
+  const out = [];
+  let found = 0;
+  for (const u of moves) {
+    const m = r.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] });
+    if (!m) break;
+    const k = /\[%clk\s+(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)\]/.exec(byFen.get(r.fen()) || '');
+    if (k) { out.push(Math.round(((+k[1]) * 3600 + (+k[2]) * 60 + (+k[3])) * 1000)); found++; } else out.push(null);
+  }
+  return found >= Math.min(4, moves.length) ? out : null;
 }
 
 /**
@@ -57,7 +75,8 @@ export function parsePgn(pgn) {
  * or an explicit colour 'w'/'b', or null for a game you only watched.
  */
 export function recordFromPgn(pgn, me, { site = 'import', date = null } = {}) {
-  const { headers, startFen, moves, sans, final } = parsePgn(pgn);
+  const { headers, startFen, moves, sans, final, moveClocks } = parsePgn(pgn);
+  const tcm = /^(\d+)\+(\d+)$/.exec(headers.TimeControl || '');
   if (moves.length < 2) throw new Error('The game is too short to review.');
   const white = headers.White || 'White', black = headers.Black || 'Black';
   let userColor = me === 'w' || me === 'b' ? me : null;
@@ -94,5 +113,6 @@ export function recordFromPgn(pgn, me, { site = 'import', date = null } = {}) {
     tc: headers.TimeControl || null, moves, sans,
     result, reason: headers.Termination || (final.isCheckmate() ? 'checkmate' : 'imported game'), userResult,
     opening: op ? { eco: op.eco, name: op.name } : null, takebacks: 0, hints: 0, review: null,
+    ...(moveClocks ? { moveClocks, tcBase: tcm ? +tcm[1] * 1000 : null, tcInc: tcm ? +tcm[2] * 1000 : 0 } : {}),
   };
 }

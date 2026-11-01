@@ -94,7 +94,7 @@ function persist(key, value) {
 // ---------- typed helpers ----------
 export function getSettings() {
   return {
-    theme: 'system', board: 'slate', pieces: 'cburnett', autoQueen: false, playEval: false, showThreats: false, botChat: true, showDests: true, premoves: true, lastMove: true, sound: true, coords: true, animation: true,
+    theme: 'system', board: 'slate', pieces: 'cburnett', autoQueen: false, playEval: false, showThreats: false, botChat: true, coach: false, reviewLines: false, showDests: true, premoves: true, lastMove: true, sound: true, coords: true, animation: true,
     reviewDepth: 'standard', ...get('settings', {}),
   };
 }
@@ -161,6 +161,10 @@ function cleanGame(g) {
     userResult: ['win', 'loss', 'draw'].includes(g.userResult) ? g.userResult : null,
     opening: g.opening ? { eco: str(g.opening.eco, 4), name: str(g.opening.name, 120) } : null,
     takebacks: num(g.takebacks), hints: num(g.hints), review: cleanReview(g.review, moves.length),
+    ...(Array.isArray(g.moveClocks) ? {
+      tcBase: num(g.tcBase) || null, tcInc: num(g.tcInc) || 0,
+      moveClocks: g.moveClocks.slice(0, moves.length).map(x => (Number.isFinite(+x) && x !== null ? Math.max(0, Math.round(+x)) : null)),
+    } : {}),
   };
 }
 
@@ -177,8 +181,8 @@ function sanitize(data) {
         })).filter(a => a.id),
       }; break;
       case 'rush': out[k] = {
-        best: Object.fromEntries(Object.entries(v?.best || {}).filter(([m]) => m === '3' || m === '5').map(([m, x]) => [m, num(x)])),
-        runs: (Array.isArray(v?.runs) ? v.runs : []).map(r => ({ mode: r?.mode === 5 ? 5 : 3, score: num(r?.score), t: num(r?.t), strikes: num(r?.strikes), maxRating: num(r?.maxRating), reason: str(r?.reason, 20) })),
+        best: Object.fromEntries(Object.entries(v?.best || {}).filter(([m]) => m === '3' || m === '5' || m === '0').map(([m, x]) => [m, num(x)])),
+        runs: (Array.isArray(v?.runs) ? v.runs : []).map(r => ({ mode: r?.mode === 5 ? 5 : r?.mode === 0 ? 0 : 3, score: num(r?.score), t: num(r?.t), strikes: num(r?.strikes), maxRating: num(r?.maxRating), reason: str(r?.reason, 20) })),
       }; break;
       case 'trainer': out[k] = {
         cards: (Array.isArray(v?.cards) ? v.cards : []).map(c => ({
@@ -203,7 +207,7 @@ function sanitize(data) {
         theme: ['system', 'light', 'dark'].includes(v?.theme) ? v.theme : 'system',
         board: ['slate', 'walnut', 'ocean', 'olive', 'mono'].includes(v?.board) ? v.board : 'slate',
         pieces: ['cburnett', 'merida', 'chessnut', 'fantasy'].includes(v?.pieces) ? v.pieces : 'cburnett',
-        sound: v?.sound !== false, coords: v?.coords !== false, animation: v?.animation !== false, autoQueen: v?.autoQueen === true, playEval: v?.playEval === true, showThreats: v?.showThreats === true, botChat: v?.botChat !== false, showDests: v?.showDests !== false, premoves: v?.premoves !== false, lastMove: v?.lastMove !== false,
+        sound: v?.sound !== false, coords: v?.coords !== false, animation: v?.animation !== false, autoQueen: v?.autoQueen === true, playEval: v?.playEval === true, showThreats: v?.showThreats === true, coach: v?.coach === true, reviewLines: v?.reviewLines === true, botChat: v?.botChat !== false, showDests: v?.showDests !== false, premoves: v?.premoves !== false, lastMove: v?.lastMove !== false,
         reviewDepth: ['fast', 'standard', 'deep'].includes(v?.reviewDepth) ? v.reviewDepth : 'standard',
       }; break;
       default: break; // unknown keys (and in-progress state) are not imported

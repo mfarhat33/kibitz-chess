@@ -103,7 +103,7 @@ function wire(root, imp) {
     fetchBtn.disabled = true;
     out.innerHTML = '<div class="status"><span class="spinner"></span> Fetching your recent games…</div>';
     try {
-      const list = await fetchRecentGames(site === 'lichess' ? 'lichess' : 'chesscom', user, 20);
+      const list = await fetchRecentGames(site === 'lichess' ? 'lichess' : 'chesscom', user, 40);
       if (mine !== req || !out.isConnected) return;
       found = list.map(g => { try { return { ...g, rec: recordFromPgn(g.pgn, user, { site, date: g.date || null }) }; } catch { return null; } }).filter(Boolean);
       if (!found.length) { out.innerHTML = '<div class="empty small">No standard games found for that player.</div>'; return; }

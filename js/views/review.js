@@ -1,6 +1,6 @@
 // Game review: engine pass over every position, then labels, accuracy, graph and explanations.
 import { Board } from '../board.js';
-import { Chess, checkSquare, playUci, uciToMove, colorName, dests, START_FEN } from '../chessutil.js';
+import { Chess, checkSquare, playUci, uciToMove, colorName, dests, uciLineToSan, formatLine, START_FEN } from '../chessutil.js';
 import { getEngine, formatScore, toWhite } from '../engine.js';
 import { positions, analyzePositions, classify, phaseStats, DEPTHS, LABELS, BAD_LABELS, LABEL_TEXT, LABEL_GLYPH, winPct, gradeMove } from '../analysis.js';
 import { explainMove } from '../explain.js';
@@ -75,6 +75,7 @@ export async function mount(root, [id], isCurrent = () => true) {
       <div class="side-col">
         <section class="card stack hidden" id="progress-card" aria-live="polite"></section>
         <section class="card stack" id="explain" aria-live="polite"></section>
+        <section class="card stack" id="r-lines"></section>
         <section class="card stack" id="summary"></section>
         <section class="card" id="graph-card"><div class="row between"><h3 style="margin:0">Evaluation</h3><span class="tiny muted">tap to jump</span></div><div id="graph" style="margin-top:8px"></div></section>
         <section class="card"><h3>Moves</h3><div class="moves" id="moves" style="max-height:300px"></div></section>
@@ -88,6 +89,24 @@ export async function mount(root, [id], isCurrent = () => true) {
 
   const review = () => game.review;
   const mover = (i) => fens[i].split(' ')[1];
+  // time spent on each move, from the clock left after it (own timed games and imported games with [%clk])
+  const spent = (() => {
+    const mc = game.moveClocks;
+    if (!Array.isArray(mc) || !mc.some(x => x != null)) return null;
+    const inc = game.tcInc || 0;
+    const last = {};
+    return game.moves.map((_, i) => {
+      const c = fens[i].split(' ')[1];
+      const now = mc[i];
+      if (now == null) return null;
+      const prev = last[c] ?? game.tcBase ?? null;
+      last[c] = now;
+      if (prev == null) return null;
+      return prev === now ? 0 : Math.max(0, prev - now + inc);
+    });
+  })();
+  const fmtSpent = (ms) => ms < 10000 ? `${(ms / 1000).toFixed(1)}s` : ms < 60000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60000)}:${String(Math.round(ms / 1000) % 60).padStart(2, '0')}`;
+  const fmtLeft = (ms) => { const t = Math.round(ms / 1000); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
   const isMine = (i) => viewer == null || mover(i) === viewer;
 
   // ---------- best line: step through the engine's suggested continuation on the board ----------
@@ -117,6 +136,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     const c = new Chess(line.fens[k]);
     board.setPosition(line.fens[k], { lastMove: k ? line.moves[k - 1] : null, check: checkSquare(c) });
     board.setMovable({});
+    showLines(line.fens[k]);
     board.setArrows([]);
     board.setBadges([]);
     if (withSound && k) { const prev = new Chess(line.fens[k - 1]); moveSound(playUci(prev, line.ucis[k - 1]), prev); }
@@ -269,6 +289,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     board.setArrows(arrows);
     board.setBadges(badges);
     if (ex.evals[k]) renderEval(ex.evals[k]);
+    if (linesFen !== fen) showLines(fen);
     // panel
     const start = new Chess(ex.fens[0]);
     const no0 = +(ex.fens[0].split(' ')[5] || 1);
@@ -337,6 +358,45 @@ export async function mount(root, [id], isCurrent = () => true) {
     return out.join(' ');
   }
 
+  // ---------- engine lines: Stockfish's top three moves for whatever position is on the board ----------
+  let linesOn = !!settings.reviewLines;
+  let linesToken = 0;
+  let linesFen = null;
+  function showLines(fen) {
+    const el = $('#r-lines', root);
+    if (!el) return;
+    if (fen !== undefined) linesFen = fen;
+    const head = `<div class="row between"><h3 style="margin:0">Engine lines</h3><button class="btn small" id="rl-toggle" type="button" aria-pressed="${linesOn}">${linesOn ? 'Hide' : 'Show top 3'}</button></div>`;
+    const t = ++linesToken;
+    const eng = getEngine('live');
+    eng.cancel();
+    const c = linesFen ? new Chess(linesFen) : null;
+    if (!linesOn || !c) {
+      el.innerHTML = head + (linesOn ? '' : '<p class="tiny muted" style="margin:0">See Stockfish\'s best three moves for the position on the board. Tap one to try it.</p>');
+    } else if (c.isGameOver()) {
+      el.innerHTML = head + `<p class="small muted" style="margin:0">${c.isCheckmate() ? 'Checkmate.' : 'The game is drawn here.'}</p>`;
+    } else {
+      el.innerHTML = head + '<div id="rl-list" class="stack" style="gap:6px"><div class="status info small"><span class="spinner"></span> Thinking…</div></div>';
+      const fen = linesFen;
+      const n = Math.min(3, c.moves().length);
+      const draw = (lines) => {
+        if (!alive || t !== linesToken || !lines?.length) return;
+        const list = $('#rl-list', root);
+        if (!list) return;
+        list.innerHTML = lines.slice(0, n).map((l, i) => `<button class="btn small block" type="button" data-rl="${i}" style="justify-content:flex-start;white-space:normal;text-align:left;height:auto;min-height:36px;padding:6px 10px">
+          <b class="mono" style="min-width:52px">${formatScore(toWhite(l, c.turn()))}</b><span class="small">${esc(formatLine(fen, uciLineToSan(fen, l.pv, 8)))}</span></button>`).join('') + `<div class="tiny muted">Stockfish · depth ${lines[0].depth}</div>`;
+        list.querySelectorAll('[data-rl]').forEach(b => b.addEventListener('click', () => {
+          const u = lines[+b.dataset.rl]?.pv?.[0];
+          if (!u || retry || analysing || line) return;
+          const m = uciToMove(u);
+          exploreMove(m.from, m.to, m.promotion);
+        }));
+      };
+      eng.analyze(fen, { depth: 18, movetime: 3000, multipv: n, onInfo: draw }).then(r => { if (r) draw(r.lines); });
+    }
+    $('#rl-toggle', el).addEventListener('click', () => { linesOn = !linesOn; store.setSettings({ reviewLines: linesOn }); showLines(); });
+  }
+
   function go(i, withSound = false) {
     line = null;
     explore = null;
@@ -368,6 +428,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     renderEval();
     renderExplain();
     renderMoves();
+    showLines(fens[p]);
     graph?.setCur(p);
   }
 
@@ -395,8 +456,18 @@ export async function mount(root, [id], isCurrent = () => true) {
     const r = review();
     if (!r) { el.innerHTML = '<p class="muted small" style="margin:0">Move-by-move feedback appears here when the analysis finishes. You can step through the game meanwhile.</p>'; return; }
     if (cur < 0) {
+      const me = viewer || 'w';
+      const cnt = (l) => Number(r.counts?.[me]?.[l] || 0);
+      const accTxt = typeof r.accuracy?.[me] === 'number' ? `${Number(r.accuracy[me]).toFixed(1)}% accuracy` : '';
       el.innerHTML = `<div class="explain-head">${icons.start} Start of the game</div>
-        <p class="muted small" style="margin:0">Step through the moves with the arrows, tap the graph, or jump straight to the mistakes.</p>
+        <div class="summary-line">
+          ${accTxt ? `<b>${viewer ? 'You' : 'White'}: ${accTxt}</b>` : ''}
+          <span><i class="q q-blunder">${LABEL_GLYPH.blunder}</i> ${cnt('blunder')}</span>
+          <span><i class="q q-mistake">${LABEL_GLYPH.mistake}</i> ${cnt('mistake')}</span>
+          <span><i class="q q-miss">${LABEL_GLYPH.miss}</i> ${cnt('miss')}</span>
+          <span><i class="q q-inaccuracy">${LABEL_GLYPH.inaccuracy}</i> ${cnt('inaccuracy')}</span>
+        </div>
+        <p class="muted small" style="margin:0">Step through the moves with the arrows, tap the graph, or jump straight to the mistakes. You can also drag pieces to try your own ideas.</p>
         <button class="btn primary" id="x-next-mistake" type="button">${icons.target} ${viewer ? 'Go to my first mistake' : 'Go to the first mistake'}</button>`;
       $('#x-next-mistake', el).addEventListener('click', nextMistake);
       return;
@@ -407,7 +478,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     el.innerHTML = `
       <div class="explain-head"><i class="q q-${lab}">${LABEL_GLYPH[lab]}</i><span class="grow">${esc(ex.headline)}</span><span class="mono small muted">${formatScore(r.evals[cur + 1])}</span></div>
       <div class="explain" style="border-left-color:var(--q-${lab})">${ex.lines.map(l => `<p>${esc(l)}</p>`).join('')}</div>
-      <div class="row between tiny muted"><span>${esc(names[mover(cur)])} · move ${Math.floor((fens[cur].split(' ')[5] | 0) || 1)}</span><span>${LABEL_TEXT[lab]} · accuracy ${Math.round(r.acc[cur])}%</span></div>
+      <div class="row between tiny muted"><span>${esc(names[mover(cur)])} · move ${Math.floor((fens[cur].split(' ')[5] | 0) || 1)}${spent?.[cur] != null ? ` · ${fmtSpent(spent[cur])} spent, ${fmtLeft(game.moveClocks[cur])} left` : ''}</span><span>${LABEL_TEXT[lab]} · accuracy ${Math.round(r.acc[cur])}%</span></div>
       <div class="row">
         ${canRetry ? `<button class="btn small primary" id="x-retry" type="button">${icons.retry} Retry this move</button>` : ''}
         ${r.pv?.[cur]?.length && !['book', 'forced'].includes(lab) ? `<button class="btn small" id="x-line" type="button">${icons.eye} Show best line</button>` : ''}
@@ -489,7 +560,8 @@ export async function mount(root, [id], isCurrent = () => true) {
     const good = !BAD_LABELS.includes(label);
     sound(good ? 'good' : 'bad');
     board.setBadges([{ sq: m.to, cls: label, text: LABEL_GLYPH[label] }]);
-    status(good ? `${icons.check} ${esc(m.san)}: ${LABEL_TEXT[label].toLowerCase()}! That fixes it.` : `${esc(m.san)} is ${label === 'inaccuracy' ? 'an' : 'a'} ${LABEL_TEXT[label].toLowerCase()} too. Try again.`, good ? 'ok' : 'bad');
+    status(good ? `${icons.check} ${esc(m.san)}: ${LABEL_TEXT[label].toLowerCase()}! That fixes it. <button class="btn small" id="x-nextm" type="button">${icons.target} Next mistake</button>` : `${esc(m.san)} is ${label === 'inaccuracy' ? 'an' : 'a'} ${LABEL_TEXT[label].toLowerCase()} too. Try again.`, good ? 'ok' : 'bad');
+    $('#x-nextm', root)?.addEventListener('click', () => { exitRetry(false); nextMistake(); });
     if (!good) {
       setTimeout(() => {
         if (!retry || retry.i !== i) return;
@@ -532,7 +604,8 @@ export async function mount(root, [id], isCurrent = () => true) {
       if (p % 2 === 0) html += `<span class="num">${startNo + p / 2}.</span>`;
       const lab = r?.labels[i];
       const show = lab && SHOW_IN_LIST.includes(lab);
-      html += `<span class="mv${i === cur ? ' cur' : ''}" data-i="${i}">${esc(s)}${show ? `<i class="q q-${lab}" title="${LABEL_TEXT[lab]}">${LABEL_GLYPH[lab]}</i>` : ''}</span>`;
+      const t = spent?.[i];
+      html += `<span class="mv${i === cur ? ' cur' : ''}" data-i="${i}">${esc(s)}${show ? `<i class="q q-${lab}" title="${LABEL_TEXT[lab]}">${LABEL_GLYPH[lab]}</i>` : ''}${t != null ? `<small class="mt" title="Time spent on this move">${fmtSpent(t)}</small>` : ''}</span>`;
     });
     const el = $('#moves', root);
     el.innerHTML = html;
@@ -571,7 +644,7 @@ export async function mount(root, [id], isCurrent = () => true) {
   function ratingRow(r) {
     const perSide = (c) => {
       const n = r.labels.filter((_, i) => mover(i) === c).length;
-      return n >= 10 && typeof r.accuracy[c] === 'number' ? ratingFromAccuracy(r.accuracy[c]) : null;
+      return n >= 15 && typeof r.accuracy[c] === 'number' ? ratingFromAccuracy(r.accuracy[c]) : null;
     };
     const w = perSide('w'), b = perSide('b');
     if (w == null && b == null) return '';
@@ -579,7 +652,7 @@ export async function mount(root, [id], isCurrent = () => true) {
         <div class="acc-box${viewer === 'w' ? ' me' : ''}"><div class="stat-label">Played like</div><div style="font-weight:800;font-size:1.25rem">${w == null ? '—' : '≈ ' + w}</div></div>
         <div class="acc-box${viewer === 'b' ? ' me' : ''}"><div class="stat-label">Played like</div><div style="font-weight:800;font-size:1.25rem">${b == null ? '—' : '≈ ' + b}</div></div>
       </div>
-      <p class="tiny muted" style="margin:-4px 0 0">A rough estimate of the rating that plays with this accuracy. One game can swing a lot.</p>`;
+      <p class="tiny muted" style="margin:-4px 0 0">A rough guess from accuracy alone (shown for games of 15+ moves). Easy positions and weak opponents inflate it; one game can swing a lot.</p>`;
   }
 
   function renderGraph() {
@@ -716,6 +789,8 @@ export async function mount(root, [id], isCurrent = () => true) {
       retry = null;
       document.removeEventListener('keydown', onKey);
       getEngine('analysis').cancel();
+      linesToken++;
+      getEngine('live').cancel();
       board.destroy();
     },
   };

@@ -171,6 +171,7 @@ export function sound(kind) {
       case 'end': blip(523, 0.18, { gain: 0.1 }); blip(392, 0.3, { gain: 0.1, delay: 0.16 }); break;
       case 'good': blip(660, 0.09, { gain: 0.1 }); blip(990, 0.16, { gain: 0.1, delay: 0.08 }); break;
       case 'bad': blip(200, 0.2, { type: 'sawtooth', gain: 0.05, slide: 0.7 }); break;
+      case 'lowtime': blip(880, 0.08, { type: 'square', gain: 0.05 }); blip(880, 0.08, { type: 'square', gain: 0.05, delay: 0.18 }); blip(880, 0.08, { type: 'square', gain: 0.05, delay: 0.36 }); break;
       default: break;
     }
   } catch { /* audio unavailable */ }

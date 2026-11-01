@@ -7,7 +7,8 @@ import { pickPuzzle, loadIndex, loadBucket, bucketOf } from '../puzzle-data.js';
 import { PuzzlePlayer } from '../puzzle-player.js';
 import { puzzleTabs } from './puzzles.js';
 
-const MODES = { 3: 180000, 5: 300000 };
+const MODES = { 3: 180000, 5: 300000, 0: null }; // 0 = Survival: no clock, the run ends on the third mistake
+const modeName = (m) => (+m === 0 ? 'Survival' : `${m} minutes`);
 let ctx = null;
 export function unmount() { ctx?.destroy(); ctx = null; }
 
@@ -34,10 +35,11 @@ function setup(root) {
       <section class="card stack">
         <h1 style="margin:0">Rush</h1>
         <p class="muted small" style="margin:0">Solve as many puzzles as you can before time runs out. Puzzles start easy and get harder with each one. Three wrong moves and your run is over.</p>
-        <div class="grid-2">
-          ${[3, 5].map(m => `
+        <div class="rush-modes">
+          ${[3, 5, 0].map(m => `
             <button class="card" type="button" data-mode="${m}" style="cursor:pointer;text-align:left;font:inherit;color:inherit">
-              <div class="row between nowrap"><b style="font-size:1.15rem">${m} minutes</b>${icons.clock.replace('<svg', '<svg style="width:22px;height:22px;color:var(--accent)"')}</div>
+              <div class="row between nowrap"><b style="font-size:1.15rem">${modeName(m)}</b>${(m ? icons.clock : icons.target).replace('<svg', '<svg style="width:22px;height:22px;color:var(--accent)"')}</div>
+              ${m ? '' : '<div class="tiny muted">No clock. Three strikes.</div>'}
               <div class="stat-label" style="margin-top:8px">Best score</div>
               <div class="stat-big">${d.best[m] != null ? Number(d.best[m]) || 0 : '—'}</div>
               <div class="btn primary block" style="margin-top:10px">${icons.start} Start</div>
@@ -46,7 +48,7 @@ function setup(root) {
       </section>
       <section class="card">
         <h3>Recent runs</h3>
-        <div class="list">${runs.length ? runs.map(r => `<div class="list-item"><div class="grow"><div class="t">${Number(r.score) || 0} solved · ${Number(r.mode) || 3} min</div><div class="s">${timeAgo(r.t)} · reached ${Number(r.maxRating) || '—'}</div></div>${d.best[r.mode] === r.score ? '<span class="result-pill win">Best</span>' : ''}</div>`).join('') : '<div class="empty small">No runs yet.</div>'}</div>
+        <div class="list">${runs.length ? runs.map(r => `<div class="list-item"><div class="grow"><div class="t">${Number(r.score) || 0} solved · ${esc(modeName(Number(r.mode) || 0))}</div><div class="s">${timeAgo(r.t)} · reached ${Number(r.maxRating) || '—'}</div></div>${d.best[r.mode] === r.score ? '<span class="result-pill win">Best</span>' : ''}</div>`).join('') : '<div class="empty small">No runs yet.</div>'}</div>
       </section>
     </div>`;
   root.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => run(root, +b.dataset.mode)));
@@ -63,7 +65,7 @@ function run(root, mode) {
         <div class="rush-hud">
           <div><div class="stat-label">Score</div><div class="rush-score" id="r-score">0</div></div>
           <div class="strikes" id="r-strikes" aria-label="Strikes"><i></i><i></i><i></i></div>
-          <div style="text-align:right"><div class="stat-label">Time</div><div class="rush-time" id="r-time">${fmtClock(MODES[mode])}</div></div>
+          <div style="text-align:right"><div class="stat-label">Time</div><div class="rush-time" id="r-time">${MODES[mode] ? fmtClock(MODES[mode]) : '∞'}</div></div>
         </div>
         <div class="board-shell"><div id="board"></div></div>
       </div>
@@ -137,7 +139,7 @@ function run(root, mode) {
       },
     });
     player.start(250);
-    if (endAt == null) endAt = performance.now() + MODES[mode];
+    if (endAt == null && MODES[mode]) endAt = performance.now() + MODES[mode];
   }
 
   const tick = setInterval(() => {
@@ -167,7 +169,7 @@ function run(root, mode) {
       <section class="card stack" style="text-align:center">
         <div class="stat-label">${reason === 'time' ? 'Time is up' : reason === 'quit' ? 'Run ended' : 'Three strikes'}</div>
         <div class="rush-score" style="font-size:3rem">${score}</div>
-        <div class="${isBest && score > 0 ? 'status ok' : 'muted'}" style="justify-content:center">${isBest && score > 0 ? `New best for ${mode} minutes!` : `Best: ${d.best[mode] ?? 0}`}</div>
+        <div class="${isBest && score > 0 ? 'status ok' : 'muted'}" style="justify-content:center">${isBest && score > 0 ? `New best for ${modeName(mode)}!` : `Best: ${d.best[mode] ?? 0}`}</div>
         <div class="small muted">Hardest puzzle reached: ${maxRating || '—'}</div>
         <div class="rush-track" style="justify-content:center">${results.map(r => `<i class="${r.ok ? '' : 'x'}" title="${r.rating}"></i>`).join('')}</div>
         <div class="grid-2">

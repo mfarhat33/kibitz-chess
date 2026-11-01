@@ -4,7 +4,7 @@ import { Chess, dests, checkSquare, playUci, uciToMove, uciLineToSan, formatLine
 import { getEngine, formatScore, toWhite } from '../engine.js';
 import { winPct } from '../analysis.js';
 import * as store from '../store.js';
-import { icons, esc, toast, dialog, $, moveSound, downloadFile } from '../ui.js';
+import { icons, esc, toast, dialog, $, moveSound, downloadFile, scrollToBoard } from '../ui.js';
 import { loadOpenings, openingOf } from '../openings-data.js';
 import { playTabs, playFromPosition } from './tabs.js';
 
@@ -23,6 +23,8 @@ export async function mount(root, params) {
   // when you branch off a loaded line, the part you replaced is kept so you can go back to it
   let mainLine = Array.isArray(saved.mainLine) ? saved.mainLine : null;
   let engineOn = saved.engineOn !== false;
+  let showArrows = saved.showArrows !== false;
+  let nLines = [1, 2, 3].includes(saved.nLines) ? saved.nLines : 3;
   let editing = null;
   const settings = store.getSettings();
 
@@ -92,7 +94,7 @@ export async function mount(root, params) {
     moveSound(h[h.length - 1], c);
     update();
   }
-  function persist() { store.set('analysis.board', { startFen, line, ply, headers, orientation: board.orientation, mainLine, engineOn }); }
+  function persist() { store.set('analysis.board', { startFen, line, ply, headers, orientation: board.orientation, mainLine, engineOn, showArrows, nLines }); }
 
   let token = 0;
   function update() {
@@ -158,9 +160,14 @@ export async function mount(root, params) {
       board.setArrows([]);
       return;
     }
-    el.innerHTML = `<div class="row between"><h3 style="margin:0">Engine</h3><span class="row nowrap"><span class="tiny muted" id="a-depth">starting…</span><button class="btn small" id="a-engine" type="button" aria-pressed="true">Turn off</button></span></div><div id="a-pv" class="stack" style="gap:6px"></div>`;
+    el.innerHTML = `<div class="row between"><h3 style="margin:0">Engine</h3><span class="row nowrap"><span class="tiny muted" id="a-depth">starting…</span><button class="btn small" id="a-engine" type="button" aria-pressed="true">Turn off</button></span></div>
+      <div class="row between small"><span class="seg" id="a-n" role="group" aria-label="Number of lines">${[1, 2, 3].map(k => `<button type="button" data-v="${k}" aria-pressed="${k === nLines}">${k} line${k > 1 ? 's' : ''}</button>`).join('')}</span>
+        <label class="row nowrap" style="gap:6px"><input type="checkbox" id="a-arrows" ${showArrows ? 'checked' : ''}> Arrows</label></div>
+      <div id="a-pv" class="stack" style="gap:6px"></div>`;
     engineToggle();
-    const n = Math.min(3, c.moves().length);
+    $('#a-n', el).addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) { nLines = +b.dataset.v; persist(); analyse(chessAt(ply)); } });
+    $('#a-arrows', el).addEventListener('change', (e) => { showArrows = e.target.checked; persist(); if (!showArrows) board.setArrows([]); else analyse(chessAt(ply)); });
+    const n = Math.min(nLines, c.moves().length);
     const show = (lines) => {
       if (!alive || t !== token || !lines.length) return;
       $('#a-depth', root).textContent = `Stockfish · depth ${lines[0].depth}`;
@@ -176,7 +183,7 @@ export async function mount(root, params) {
       }));
       setBar(toWhite(lines[0], c.turn()));
       const arrows = lines.slice(0, n).map((l, i) => { const m = uciToMove(l.pv[0]); return { from: m.from, to: m.to, color: i === 0 ? 'rgba(16,150,110,.8)' : 'rgba(16,150,110,.35)', width: i === 0 ? 0.16 : 0.11 }; });
-      board.setArrows(arrows);
+      board.setArrows(showArrows ? arrows : []);
     };
     eng.analyze(fen, { depth: 22, movetime: 8000, multipv: n, onInfo: show }).then(r => {
       if (r) show(r.lines);
@@ -188,8 +195,16 @@ export async function mount(root, params) {
     const w = winPct(score);
     $('#ebh', root).style.width = w + '%';
     const v = $('#ebv', root);
-    v.classList.toggle('flipped', board.orientation === 'black');
+    const flipped = board.orientation === 'black';
+    v.classList.toggle('flipped', flipped);
     v.querySelector('i').style.height = w + '%';
+    // the score is written on the side that is ahead, as in the review
+    const span = v.querySelector('span');
+    span.textContent = !engineOn ? '' : score.mate === 0 ? '#' : formatScore(score).replace('+', '').replace(/^-0\.0$/, '0.0');
+    const whiteAhead = w >= 50;
+    span.style.top = (whiteAhead !== flipped) ? 'auto' : '4px';
+    span.style.bottom = (whiteAhead !== flipped) ? '4px' : 'auto';
+    span.style.color = whiteAhead ? 'var(--eval-black)' : 'var(--eval-white)';
   }
 
   async function importDialog() {
@@ -225,6 +240,7 @@ export async function mount(root, params) {
         toast(`Loaded ${Math.ceil(line.length / 2)} moves`);
       }
       update();
+      scrollToBoard(root);
     } catch (err) {
       dialog({ title: 'Could not read that', body: `<p>${esc(looksFen ? 'That FEN is not a legal position.' : 'That PGN could not be parsed. Check that the moves are legal and in standard notation.')}</p><p class="tiny muted">${esc(err.message || '')}</p>` });
     }
@@ -408,6 +424,8 @@ export async function mount(root, params) {
     if (e.target.closest('input,textarea,select,dialog') || editing) return;
     if (e.key === 'ArrowLeft' && ply > 0) { ply--; update(); e.preventDefault(); }
     else if (e.key === 'ArrowRight' && ply < line.length) { ply++; update(); e.preventDefault(); }
+    else if (e.key === 'Home' || e.key === 'ArrowUp') { ply = 0; update(); e.preventDefault(); }
+    else if (e.key === 'End' || e.key === 'ArrowDown') { ply = line.length; update(); e.preventDefault(); }
   };
   document.addEventListener('keydown', onKey);
   ctx = { destroy() { alive = false; eng.cancel(); document.removeEventListener('keydown', onKey); board.destroy(); } };
