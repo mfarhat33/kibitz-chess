@@ -614,3 +614,20 @@ a.icon-btn { color: var(--text); }
   .play-stage > .board-col .board-shell { width: 100%; }
   .play-stage > .board-col { width: calc(100dvh - var(--top-h) - var(--nav-h) - 110px); }
 }
+
+/* threats, bot chat, draw button */
+.kb-sq.threat { box-shadow: inset 0 0 0 3px rgba(226, 64, 64, .9); background-image: radial-gradient(rgba(226, 64, 64, .28), rgba(226, 64, 64, .12)); }
+.play-nav:has(#n-threats) { grid-template-columns: repeat(6, 1fr); }
+.btn-row .btn .half { font-size: 1.15rem; line-height: 20px; height: 20px; font-weight: 800; }
+.board-col { position: relative; }
+.bot-chat {
+  position: absolute; z-index: 20; top: 50px; left: 16px; max-width: min(320px, calc(100% - 32px));
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow);
+  border-radius: 12px; padding: 8px 12px; font-size: .86rem; line-height: 1.35; pointer-events: none;
+  animation: chat-in .18s ease-out;
+}
+.bot-chat::before { content: ""; position: absolute; top: -6px; left: 18px; width: 10px; height: 10px; background: inherit; border-left: 1px solid var(--border); border-top: 1px solid var(--border); transform: rotate(45deg); }
+@keyframes chat-in { from { opacity: 0; transform: translateY(-4px); } }
+@media (min-width: 900px) { .bot-chat { left: 2px; } .play-stage.with-evalbar .bot-chat { left: 36px; } }
+:root[data-dests="0"] .kb-sq.dest::after { display: none; }
+#tc-custom input { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; }

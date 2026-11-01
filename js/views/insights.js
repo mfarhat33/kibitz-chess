@@ -80,6 +80,7 @@ export function computeInsights(games, puzzles, rush) {
   const weakest = themes.filter(t => t.n >= 3).sort((a, b) => a.rate - b.rate || b.n - a.n).slice(0, 8);
 
   return {
+    strength: performanceRating(chron),
     total: chron.length,
     ...wdl(chron),
     score: score(chron),
@@ -96,6 +97,20 @@ export function computeInsights(games, puzzles, rush) {
     weakest,
     rushBest: rush?.best || {},
   };
+}
+
+/**
+ * Performance rating over your last 20 games against the bots: average bot rating + 400 x (wins - losses) / games.
+ * Imported games are left out (their ratings come from another site's scale).
+ */
+export function performanceRating(chron) {
+  const gs = chron.filter(g => !g.imported && typeof g.botElo === 'number' && g.botElo > 0).slice(-20);
+  if (gs.length < 3) return null;
+  const opp = gs.reduce((s, g) => s + Math.min(g.botElo, 3000), 0) / gs.length;
+  const w = gs.filter(g => g.userResult === 'win').length, l = gs.filter(g => g.userResult === 'loss').length;
+  const perf = opp + 400 * (w - l) / gs.length;
+  const helped = gs.filter(g => (g.takebacks || 0) + (g.hints || 0) > 0).length;
+  return { value: Math.round(Math.max(100, Math.min(3200, perf)) / 10) * 10, games: gs.length, helped };
 }
 
 function ratedSeries(rated) {
@@ -121,6 +136,7 @@ export function mount(root) {
     <div class="page stack">
       <div class="hero"><h1 style="margin:0">Insights</h1><p class="muted small" style="margin:.2em 0 0">Based on ${d.total} game${d.total === 1 ? '' : 's'} played here (${d.reviewedCount} reviewed) and ${d.puzzleCount} puzzle attempt${d.puzzleCount === 1 ? '' : 's'}.</p></div>
       <div class="kpis">
+        <div class="kpi" title="${d.strength?.helped ? `${d.strength.helped} of these games used takebacks or hints, which flatters the number.` : 'Performance against the bots'}"><div class="stat-label">Playing strength</div><div class="stat-big">${d.strength ? '≈' + d.strength.value : '—'}</div><div class="tiny muted">${d.strength ? `vs bots, last ${d.strength.games}${d.strength.helped ? ' (with help)' : ''}` : 'play 3 bot games'}</div></div>
         <div class="kpi"><div class="stat-label">Games</div><div class="stat-big">${d.total}</div><div class="tiny muted">${d.win}W · ${d.draw}D · ${d.loss}L</div></div>
         <div class="kpi"><div class="stat-label">Score</div><div class="stat-big">${pct(d.score)}</div><div class="tiny muted">points won</div></div>
         <div class="kpi"><div class="stat-label">Accuracy</div><div class="stat-big">${num(d.recentAcc)}</div><div class="tiny muted">last 10 reviewed</div></div>

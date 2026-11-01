@@ -88,7 +88,69 @@ export async function mount(root, [id], isCurrent = () => true) {
   const mover = (i) => fens[i].split(' ')[1];
   const isMine = (i) => viewer == null || mover(i) === viewer;
 
+  // ---------- best line: step through the engine's suggested continuation on the board ----------
+  let line = null;
+  function startLine(i) {
+    const r = review();
+    const pv = r?.pv?.[i];
+    if (!pv?.length) return;
+    const c = new Chess(fens[i]);
+    const lf = [c.fen()], ls = [], lm = [], lu = [];
+    for (const u of pv) { const m = playUci(c, u); if (!m) break; lf.push(c.fen()); ls.push(m.san); lm.push([m.from, m.to]); lu.push(u); }
+    if (!ls.length) return;
+    line = { i, ply: 1, fens: lf, sans: ls, moves: lm, ucis: lu };
+    showLine(true);
+  }
+  function lineStep(k) {
+    if (!line) return;
+    const n = Math.max(0, Math.min(line.sans.length, k));
+    if (n === line.ply) return;
+    const fwd = n > line.ply;
+    line.ply = n;
+    showLine(fwd);
+  }
+  function showLine(withSound = false) {
+    const k = line.ply;
+    const c = new Chess(line.fens[k]);
+    board.setPosition(line.fens[k], { lastMove: k ? line.moves[k - 1] : null, check: checkSquare(c) });
+    board.setArrows([]);
+    board.setBadges([]);
+    if (withSound && k) { const prev = new Chess(line.fens[k - 1]); moveSound(playUci(prev, line.ucis[k - 1]), prev); }
+    const start = new Chess(line.fens[0]);
+    const no0 = +(line.fens[0].split(' ')[5] || 1);
+    const shift = start.turn() === 'b' ? 1 : 0;
+    let html = shift ? `<span class="n">${no0}...</span>` : '';
+    line.sans.forEach((san, j) => {
+      if ((j + shift) % 2 === 0) html += `<span class="n">${no0 + (j + shift) / 2}.</span>`;
+      html += `<span class="mvi${j === k - 1 ? ' cur' : ''}" data-l="${j}">${esc(san)}</span>`;
+    });
+    const el = $('#explain', root);
+    el.innerHTML = `
+      <div class="explain-head">${icons.eye}<span class="grow">${line.ucis[0] === game.moves[line.i] ? `Best continuation after ${esc(sans[line.i])}` : `Best line instead of ${esc(sans[line.i])}`}</span></div>
+      <div class="moves-inline line-moves" style="flex-wrap:wrap;padding:0">${html}</div>
+      <div class="row">
+        <button class="btn small" id="l-prev" type="button" aria-label="Previous move in the line" ${k === 0 ? 'disabled' : ''}>${icons.prev}</button>
+        <button class="btn small" id="l-next" type="button" aria-label="Next move in the line" ${k >= line.sans.length ? 'disabled' : ''}>${icons.next}</button>
+        <button class="btn small" id="l-play" type="button">${icons.start} Play it out</button>
+        <button class="btn small primary" id="l-back" type="button">Back to the game</button>
+      </div>
+      <p class="tiny muted" style="margin:0">Use the arrows (or ← → keys) to step through what Stockfish would have played.</p>`;
+    $('#l-prev', el).addEventListener('click', () => lineStep(line.ply - 1));
+    $('#l-next', el).addEventListener('click', () => lineStep(line.ply + 1));
+    $('#l-back', el).addEventListener('click', () => go(line ? line.i : cur));
+    $('#l-play', el).addEventListener('click', async () => {
+      // animate the rest of the line, one move at a time
+      const mine = line;
+      while (line === mine && line.ply < line.sans.length) {
+        lineStep(line.ply + 1);
+        await new Promise(res => setTimeout(res, 650));
+      }
+    });
+    el.querySelector('.line-moves').addEventListener('click', (e) => { const m = e.target.closest('[data-l]'); if (m) lineStep(+m.dataset.l + 1); });
+  }
+
   function go(i, withSound = false) {
+    line = null;
     if (retry) exitRetry(false);
     const moved = Math.max(-1, Math.min(game.moves.length - 1, i)) !== cur;
     cur = Math.max(-1, Math.min(game.moves.length - 1, i));
@@ -159,8 +221,10 @@ export async function mount(root, [id], isCurrent = () => true) {
       <div class="row between tiny muted"><span>${esc(names[mover(cur)])} · move ${Math.floor((fens[cur].split(' ')[5] | 0) || 1)}</span><span>${LABEL_TEXT[lab]} · accuracy ${Math.round(r.acc[cur])}%</span></div>
       <div class="row">
         ${canRetry ? `<button class="btn small primary" id="x-retry" type="button">${icons.retry} Retry this move</button>` : ''}
+        ${r.pv?.[cur]?.length && !['book', 'forced'].includes(lab) ? `<button class="btn small" id="x-line" type="button">${icons.eye} Show best line</button>` : ''}
         <button class="btn small" id="x-next-mistake" type="button">${icons.target} Next mistake</button>
       </div>`;
+    $('#x-line', el)?.addEventListener('click', () => { if (!analysing) startLine(cur); });
     $('#x-next-mistake', el).addEventListener('click', nextMistake);
     $('#x-retry', el)?.addEventListener('click', () => { if (!analysing) startRetry(cur); });
     if (analysing) setBusy(true);
@@ -309,8 +373,24 @@ export async function mount(root, [id], isCurrent = () => true) {
         <div class="acc-box${viewer === 'w' ? ' me' : ''}"><div class="stat-label">White · ${esc(names.w)}</div><div class="stat-big">${acc('w')}</div></div>
         <div class="acc-box${viewer === 'b' ? ' me' : ''}"><div class="stat-label">Black · ${esc(names.b)}</div><div class="stat-big">${acc('b')}</div></div>
       </div>
+      ${ratingRow(r)}
       <table class="counts"><thead><tr><th>White</th><th></th><th>Black</th></tr></thead><tbody>${rows}</tbody></table>
       ${phTxt ? `<div><div class="label" style="margin-bottom:6px">Your accuracy by phase</div><div class="kpis">${phTxt}</div></div>` : ''}`;
+  }
+
+  // a rough "played like" rating from each side's accuracy (needs a game of some length to mean anything)
+  function ratingRow(r) {
+    const perSide = (c) => {
+      const n = r.labels.filter((_, i) => mover(i) === c).length;
+      return n >= 10 && typeof r.accuracy[c] === 'number' ? ratingFromAccuracy(r.accuracy[c]) : null;
+    };
+    const w = perSide('w'), b = perSide('b');
+    if (w == null && b == null) return '';
+    return `<div class="acc-pair game-rating">
+        <div class="acc-box${viewer === 'w' ? ' me' : ''}"><div class="stat-label">Played like</div><div style="font-weight:800;font-size:1.25rem">${w == null ? '—' : '≈ ' + w}</div></div>
+        <div class="acc-box${viewer === 'b' ? ' me' : ''}"><div class="stat-label">Played like</div><div style="font-weight:800;font-size:1.25rem">${b == null ? '—' : '≈ ' + b}</div></div>
+      </div>
+      <p class="tiny muted" style="margin:-4px 0 0">A rough estimate of the rating that plays with this accuracy. One game can swing a lot.</p>`;
   }
 
   function renderGraph() {
@@ -423,6 +503,7 @@ export async function mount(root, [id], isCurrent = () => true) {
 
   const onKey = (e) => {
     if (e.target.closest('input,textarea,select,dialog') || retry) return;
+    if (line && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { lineStep(line.ply + (e.key === 'ArrowRight' ? 1 : -1)); e.preventDefault(); return; }
     if (e.key === 'ArrowLeft') { go(cur - 1); e.preventDefault(); }
     else if (e.key === 'ArrowRight') { go(cur + 1, true); e.preventDefault(); }
     else if (e.key === 'Home') { go(-1); e.preventDefault(); }
@@ -459,6 +540,19 @@ export async function mount(root, [id], isCurrent = () => true) {
     }
     renderAll();
   }
+}
+
+/** Rough rating for a game accuracy (Lichess-style accuracy), rounded to 50. */
+export function ratingFromAccuracy(acc) {
+  const T = [[0, 250], [40, 400], [55, 700], [65, 1000], [72, 1250], [78, 1500], [83, 1750], [87, 2000], [91, 2300], [94, 2600], [97, 2900], [100, 3200]];
+  const a = Math.max(0, Math.min(100, acc));
+  for (let i = 1; i < T.length; i++) {
+    if (a <= T[i][0]) {
+      const [x0, y0] = T[i - 1], [x1, y1] = T[i];
+      return Math.round((y0 + (y1 - y0) * (a - x0) / (x1 - x0)) / 50) * 50;
+    }
+  }
+  return 3200;
 }
 
 function sansOf(moves, startFen = START_FEN) {

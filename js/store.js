@@ -94,7 +94,7 @@ function persist(key, value) {
 // ---------- typed helpers ----------
 export function getSettings() {
   return {
-    theme: 'system', board: 'slate', pieces: 'cburnett', autoQueen: false, playEval: false, sound: true, coords: true, animation: true,
+    theme: 'system', board: 'slate', pieces: 'cburnett', autoQueen: false, playEval: false, showThreats: false, botChat: true, showDests: true, sound: true, coords: true, animation: true,
     reviewDepth: 'standard', ...get('settings', {}),
   };
 }
@@ -152,7 +152,7 @@ function cleanGame(g) {
   const moves = ucis(g.moves);
   const colour = g.userColor === 'b' ? 'b' : 'w';
   return {
-    id: str(g.id, 40), imported: !!g.imported, spectator: !!g.spectator,
+    id: str(g.id, 40), imported: !!g.imported, spectator: !!g.spectator, friend: !!g.friend,
     date: num(g.date, Date.now()), endedAt: num(g.endedAt), startFen: g.startFen ? str(g.startFen, 100) : undefined,
     whiteName: str(g.whiteName, 60) || undefined, blackName: str(g.blackName, 60) || undefined,
     userColor: colour, botElo: num(g.botElo), botName: str(g.botName, 60) || 'Bot', botLabel: str(String(g.botLabel ?? ''), 20),
@@ -203,7 +203,7 @@ function sanitize(data) {
         theme: ['system', 'light', 'dark'].includes(v?.theme) ? v.theme : 'system',
         board: ['slate', 'walnut', 'ocean', 'olive', 'mono'].includes(v?.board) ? v.board : 'slate',
         pieces: ['cburnett', 'merida', 'chessnut', 'fantasy'].includes(v?.pieces) ? v.pieces : 'cburnett',
-        sound: v?.sound !== false, coords: v?.coords !== false, animation: v?.animation !== false, autoQueen: v?.autoQueen === true, playEval: v?.playEval === true,
+        sound: v?.sound !== false, coords: v?.coords !== false, animation: v?.animation !== false, autoQueen: v?.autoQueen === true, playEval: v?.playEval === true, showThreats: v?.showThreats === true, botChat: v?.botChat !== false, showDests: v?.showDests !== false,
         reviewDepth: ['fast', 'standard', 'deep'].includes(v?.reviewDepth) ? v.reviewDepth : 'standard',
       }; break;
       default: break; // unknown keys (and in-progress state) are not imported

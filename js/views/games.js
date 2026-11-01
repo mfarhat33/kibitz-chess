@@ -100,12 +100,12 @@ function wire(root, imp) {
 function row(g) {
   const accRaw = g.review?.accuracy?.[g.userColor];
   const acc = typeof accRaw === 'number' ? accRaw : null;
-  const res = { win: 'Win', loss: 'Loss', draw: 'Draw' }[g.userResult] || (g.spectator ? 'Watched' : g.result);
+  const res = { win: 'Win', loss: 'Loss', draw: 'Draw' }[g.userResult] || (g.friend ? 'Friend' : g.spectator ? 'Watched' : g.result);
   const blunders = g.review ? Number(g.review.counts?.[g.userColor]?.blunder) || 0 : null;
   return `<a class="list-item" href="#/review/${encodeURIComponent(g.id)}">
-    ${g.spectator ? '<span class="color-dot n" title="A game you watched"></span>' : `<span class="color-dot ${g.userColor}" title="You played ${g.userColor === 'w' ? 'White' : 'Black'}"></span>`}
+    ${g.spectator ? `<span class="color-dot n" title="${g.friend ? 'Played with a friend on this device' : 'A game you watched'}"></span>` : `<span class="color-dot ${g.userColor}" title="You played ${g.userColor === 'w' ? 'White' : 'Black'}"></span>`}
     <div class="grow">
-      <div class="t">${g.spectator ? `${esc(g.whiteName)} vs ${esc(g.blackName)}` : `vs ${esc(g.botName)}`}${!g.spectator && (g.botLabel || g.botElo) ? ` <span class="muted">(${esc(g.botLabel || g.botElo)})</span>` : ''}${g.imported ? ' <span class="tiny muted">· imported</span>' : ''}</div>
+      <div class="t">${g.friend ? 'Game with a friend' : g.spectator ? `${esc(g.whiteName)} vs ${esc(g.blackName)}` : `vs ${esc(g.botName)}`}${!g.spectator && (g.botLabel || g.botElo) ? ` <span class="muted">(${esc(g.botLabel || g.botElo)})</span>` : ''}${g.imported ? ' <span class="tiny muted">· imported</span>' : ''}</div>
       <div class="s">${esc(g.opening?.name || 'Unknown opening')} · ${Math.ceil(g.moves.length / 2)} moves · ${timeAgo(g.date)}</div>
     </div>
     <div style="text-align:right">

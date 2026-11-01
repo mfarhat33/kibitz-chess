@@ -41,6 +41,7 @@ function prefs() {
 // ---------------- setup ----------------
 function setupView(root) {
   const p = prefs();
+  const settings = store.getSettings();
   // "Play vs bot from here" on the analysis board or in a review hands over a position
   const fromFen = store.get('play.fromFen');
   if (fromFen) p.color = fromFen.split(' ')[1];
@@ -50,32 +51,50 @@ function setupView(root) {
       <div class="board-col desktop-only"><div class="board-shell"><div id="preview"></div></div></div>
       <div class="side-col">
         <section class="card stack" aria-labelledby="setup-h">
-          <h1 id="setup-h">Play a bot</h1>
-          ${fromFen ? `<div class="status info small">Starting from a custom position (${fromFen.split(' ')[1] === 'w' ? 'White' : 'Black'} to move). <button class="btn small" id="clear-fen" type="button">Use the normal start</button></div>` : ''}
-          <div class="level-display">
-            <div><div class="elo" id="lv-elo"></div><div class="lname" id="lv-name"></div></div>
-            <div class="avatar bot" id="lv-av" style="width:52px;height:52px;font-size:1.1rem;border-radius:14px"></div>
+          <h1 id="setup-h">New game</h1>
+          <div class="seg" id="mode" role="group" aria-label="Opponent">
+            <button type="button" data-v="bot">Play a bot</button><button type="button" data-v="friend">Play a friend</button>
           </div>
-          <p class="muted small" id="lv-blurb" style="margin:0;min-height:2.6em"></p>
-          <input type="range" id="lv" min="0" max="${LEVELS.length - 1}" step="1" value="${p.level}" aria-label="Bot strength">
-          <div class="row between tiny muted"><span>400</span><span>1100</span><span>1800</span><span>Full</span></div>
-          <div class="field"><span class="label">Play as</span>
-            <div class="seg" id="color" role="group" aria-label="Your colour">
-              <button type="button" data-v="w">White</button><button type="button" data-v="random">Random</button><button type="button" data-v="b">Black</button>
+          ${fromFen ? `<div class="status info small">Starting from a custom position (${fromFen.split(' ')[1] === 'w' ? 'White' : 'Black'} to move). <button class="btn small" id="clear-fen" type="button">Use the normal start</button></div>` : ''}
+          <div class="stack" id="bot-opts">
+            <div class="level-display">
+              <div><div class="elo" id="lv-elo"></div><div class="lname" id="lv-name"></div></div>
+              <div class="avatar bot" id="lv-av" style="width:52px;height:52px;font-size:1.1rem;border-radius:14px"></div>
             </div>
+            <p class="muted small" id="lv-blurb" style="margin:0;min-height:2.6em"></p>
+            <input type="range" id="lv" min="0" max="${LEVELS.length - 1}" step="1" value="${p.level}" aria-label="Bot strength">
+            <div class="row between tiny muted"><span>400</span><span>1100</span><span>1800</span><span>Full</span></div>
+            <div class="field"><span class="label">Play as</span>
+              <div class="seg" id="color" role="group" aria-label="Your colour">
+                <button type="button" data-v="w">White</button><button type="button" data-v="random">Random</button><button type="button" data-v="b">Black</button>
+              </div>
+            </div>
+          </div>
+          <div class="stack hidden" id="friend-opts">
+            <p class="muted small" style="margin:0">Pass-and-play on this device. Take turns moving; the game is saved so you can review it together.</p>
+            <label class="toggle"><span>Turn the board after each move</span><input type="checkbox" id="autoflip" ${p.autoflip ? 'checked' : ''}></label>
           </div>
           <div class="field"><span class="label">Clock</span>
             <div class="chips" id="tc" role="group" aria-label="Time control">
-              ${TCS.map(t => `<button type="button" class="chip" data-v="${t.id}">${t.label}</button>`).join('')}
+              ${TCS.map(t => `<button type="button" class="chip" data-v="${t.id}">${t.label}</button>`).join('')}<button type="button" class="chip" data-v="custom">Custom</button>
+            </div>
+            <div class="row nowrap hidden" id="tc-custom" style="margin-top:8px">
+              <label class="grow small">Minutes<input type="number" id="tc-min" min="1" max="180" step="1" value="${p.custom?.min ?? 10}" inputmode="numeric"></label>
+              <label class="grow small">Increment (sec)<input type="number" id="tc-inc" min="0" max="60" step="1" value="${p.custom?.inc ?? 5}" inputmode="numeric"></label>
             </div>
           </div>
+          <div class="field" id="assist"><span class="label">Help during the game</span>
+            <label class="toggle"><span>Evaluation bar (who is winning)</span><input type="checkbox" id="as-eval" ${settings.playEval ? 'checked' : ''}></label>
+            <label class="toggle"><span>Show threats (your pieces that can be won)</span><input type="checkbox" id="as-threats" ${settings.showThreats ? 'checked' : ''}></label>
+            <label class="toggle"><span>Bot chat</span><input type="checkbox" id="as-chat" ${settings.botChat !== false ? 'checked' : ''}></label>
+          </div>
           <button class="btn primary block" id="start" type="button">${icons.start} Start game</button>
-          <p class="tiny muted" style="margin:0">Levels are approximate ratings. Hints and takebacks are always available, and every finished game can be reviewed.</p>
+          <p class="tiny muted" style="margin:0" id="setup-note">Levels are approximate ratings. Hints and takebacks are always available, and every finished game can be reviewed.</p>
         </section>
       </div>
     </div>`;
   const preview = $('#preview', root);
-  const board = new Board(preview, { fen: fromFen || new Chess().fen(), coordinates: store.getSettings().coords, orientation: fromFen?.split(' ')[1] === 'b' ? 'black' : 'white' });
+  const board = new Board(preview, { fen: fromFen || new Chess().fen(), coordinates: settings.coords, orientation: fromFen?.split(' ')[1] === 'b' ? 'black' : 'white' });
   $('#clear-fen', root)?.addEventListener('click', () => { store.del('play.fromFen'); board.destroy(); setupView(root); });
   const lv = $('#lv', root);
   const showLevel = () => {
@@ -90,29 +109,58 @@ function setupView(root) {
   const pick = (groupSel, val) => {
     root.querySelectorAll(`${groupSel} button`).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === val)));
   };
-  pick('#color', p.color);
-  pick('#tc', p.tc);
-  let color = p.color, tc = p.tc;
+  let color = p.color, tc = p.tc, mode = p.mode === 'friend' ? 'friend' : 'bot';
+  const showMode = () => {
+    pick('#mode', mode);
+    $('#bot-opts', root).classList.toggle('hidden', mode !== 'bot');
+    $('#friend-opts', root).classList.toggle('hidden', mode !== 'friend');
+    $('#as-threats', root).closest('label').classList.toggle('hidden', mode !== 'bot');
+    $('#as-chat', root).closest('label').classList.toggle('hidden', mode !== 'bot');
+    $('#setup-note', root).classList.toggle('hidden', mode !== 'bot');
+  };
+  const showTc = () => { pick('#tc', tc); $('#tc-custom', root).classList.toggle('hidden', tc !== 'custom'); };
+  showMode();
+  pick('#color', color);
+  showTc();
+  $('#mode', root).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { mode = b.dataset.v; showMode(); } });
   $('#color', root).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { color = b.dataset.v; pick('#color', color); } });
-  $('#tc', root).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { tc = b.dataset.v; pick('#tc', tc); } });
+  $('#tc', root).addEventListener('click', e => { const b = e.target.closest('button'); if (b) { tc = b.dataset.v; showTc(); } });
   $('#start', root).addEventListener('click', () => {
-    store.set('play.prefs', { level: +lv.value, color, tc });
+    const clamp = (v, lo, hi, d) => { const n = Math.round(+v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
+    const custom = { min: clamp($('#tc-min', root).value, 1, 180, 10), inc: clamp($('#tc-inc', root).value, 0, 60, 0) };
+    const autoflip = $('#autoflip', root).checked;
+    store.set('play.prefs', { level: +lv.value, color, tc, mode, custom, autoflip });
+    store.setSettings({ playEval: $('#as-eval', root).checked, showThreats: $('#as-threats', root).checked, botChat: $('#as-chat', root).checked });
     board.destroy();
-    startNew(root, { level: +lv.value, color, tc, startFen: fromFen || null });
+    startNew(root, { level: +lv.value, color: mode === 'friend' ? 'w' : color, tc, startFen: fromFen || null, mode, custom, autoflip });
   });
   ctx = { destroy: () => board.destroy() };
 }
 
-function startNew(root, { level, color, tc, startFen = null }) {
+/** Clock settings for a stored game: one of the presets, or a custom base/increment. */
+function tcOf(state) {
+  if (state.tcCustom) return state.tcCustom;
+  return TCS.find(x => x.id === state.tc) || null;
+}
+
+function startNew(root, { level, color, tc, startFen = null, mode = 'bot', custom = null, autoflip = false }) {
   store.del('play.fromFen');
   const userColor = color === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : color;
-  const t = TCS.find(x => x.id === tc) || TCS[0];
+  let t = TCS.find(x => x.id === tc) || TCS[0];
+  let tcCustom = null;
+  if (tc === 'custom' && custom) {
+    tcCustom = { id: `${custom.min}+${custom.inc}`, label: `${custom.min} | ${custom.inc}`, base: custom.min * 60000, inc: custom.inc * 1000 };
+    t = tcCustom;
+  }
   const state = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     startedAt: Date.now(),
+    mode: mode === 'friend' ? 'friend' : 'bot',
+    autoflip: mode === 'friend' && !!autoflip,
     userColor,
     level,
     tc: t.base ? t.id : null,
+    tcCustom,
     clocks: t.base ? { w: t.base, b: t.base } : null,
     clockLog: t.base ? [{ w: t.base, b: t.base }] : null,
     moves: [],
@@ -122,7 +170,7 @@ function startNew(root, { level, color, tc, startFen = null }) {
     over: false,
   };
   store.set('play.current', state);
-  getEngine('bot').newGame();
+  if (state.mode === 'bot') getEngine('bot').newGame();
   ctx?.destroy?.();
   gameView(root, state);
 }
@@ -130,11 +178,14 @@ function startNew(root, { level, color, tc, startFen = null }) {
 // ---------------- game ----------------
 function gameView(root, state) {
   const level = LEVELS[state.level] || LEVELS[DEFAULT_LEVEL];
-  const tc = TCS.find(x => x.id === state.tc) || null;
+  const tc = tcOf(state);
+  // pass-and-play: both sides are moved on this device and there is no bot
+  const friend = state.mode === 'friend';
   const user = state.userColor;
-  const bot = user === 'w' ? 'b' : 'w';
+  const bot = friend ? null : (user === 'w' ? 'b' : 'w');
   const startFen = state.startFen || START_FEN;
-  const botFirst = startFen.split(' ')[1] === bot;
+  const botFirst = !friend && startFen.split(' ')[1] === bot;
+  const humanTurn = () => friend || chess.turn() === user;
   const chess = new Chess(startFen);
   for (const u of state.moves) if (!playUci(chess, u)) break;
   const settings = store.getSettings();
@@ -142,6 +193,7 @@ function gameView(root, state) {
   root.innerHTML = `
     <div class="stage play-stage${settings.playEval ? ' with-evalbar' : ' evaloff'}">
       <div class="board-col">
+        <div class="bot-chat hidden" id="chat" role="status" aria-live="polite"></div>
         <div class="player-bar" id="bar-top"></div>
         <div class="evalbar-h" aria-hidden="true"><i id="ebh" style="width:50%"></i></div>
         <div class="board-and-bar">
@@ -155,6 +207,7 @@ function gameView(root, state) {
           <button class="btn" id="n-next" type="button" aria-label="Next move">${icons.next}</button>
           <button class="btn" id="n-last" type="button" aria-label="Back to the current position">${icons.last}</button>
           <button class="btn" id="n-eval" type="button" aria-label="Evaluation bar" title="Show who is winning" aria-pressed="${settings.playEval}">${icons.chart}</button>
+          ${friend ? '' : `<button class="btn" id="n-threats" type="button" aria-label="Show threats" title="Highlight your pieces that can be won" aria-pressed="${!!settings.showThreats}">${icons.target}</button>`}
         </div>
       </div>
       <div class="side-col">
@@ -163,6 +216,7 @@ function gameView(root, state) {
           <button class="btn" id="b-hint" type="button">${icons.hint}<span>Hint</span></button>
           <button class="btn" id="b-undo" type="button">${icons.undo}<span>Takeback</span></button>
           <button class="btn" id="b-flip" type="button">${icons.flip}<span>Flip</span></button>
+          <button class="btn" id="b-draw" type="button"><b class="half" aria-hidden="true">½</b><span>Draw</span></button>
           <button class="btn" id="b-resign" type="button">${icons.flag}<span>Resign</span></button>
         </div>
         <section class="card stack hidden" id="after"></section>
@@ -179,7 +233,7 @@ function gameView(root, state) {
     </div>`;
 
   const board = new Board($('#board', root), {
-    orientation: colorName(user),
+    orientation: friend && state.autoflip ? colorName(chess.turn()) : colorName(user),
     coordinates: settings.coords,
     animate: settings.animation,
     onMove: (from, to, promo) => userMove(from, to, promo),
@@ -198,6 +252,10 @@ function gameView(root, state) {
   let hintArrow = null;
   let engineState = 'loading';
   let alive = true;
+  let threatsOn = !friend && !!settings.showThreats;
+  let chatTimer = 0;
+  let lastChatPly = -9;
+  let drawBlockedUntil = 0;
   // move browsing: null shows the live game, a number shows the position after that many moves
   let view = null;
   let evalOn = settings.playEval;
@@ -226,7 +284,7 @@ function gameView(root, state) {
   }
 
   function barHtml(color) {
-    const isBot = color === bot;
+    const isBot = !friend && color === bot;
     const mat = material(chess);
     const opp = color === 'w' ? 'b' : 'w';
     let caps = '';
@@ -238,9 +296,9 @@ function gameView(root, state) {
     const t = live(color);
     const running = clockActive() && chess.turn() === color;
     return `
-      <div class="avatar ${isBot ? 'bot' : 'me'}">${isBot ? esc(level.name.slice(0, 2)) : 'You'.slice(0, 2)}</div>
+      <div class="avatar ${isBot ? 'bot' : 'me'}">${isBot ? esc(level.name.slice(0, 2)) : friend ? (color === 'w' ? 'W' : 'B') : 'Yo'}</div>
       <div class="who">
-        <div class="name">${isBot ? `${esc(level.name)} <span class="muted small">(${levelLabel(level)})</span>` : 'You'}</div>
+        <div class="name">${isBot ? `${esc(level.name)} <span class="muted small">(${levelLabel(level)})</span>` : friend ? (color === 'w' ? 'White' : 'Black') : 'You'}</div>
         <div class="sub"><span class="captured">${caps}${diff > 0 ? `<b>+${diff}</b>` : ''}</span></div>
       </div>
       ${t == null ? '' : `<div class="clock${running ? ' running' : ''}${t < 20000 ? ' low' : ''}" data-clock="${color}">${fmtClock(t)}</div>`}`;
@@ -305,9 +363,12 @@ function gameView(root, state) {
       st.innerHTML = `${esc(view === 0 ? 'Starting position' : `After ${moveLabel(view - 1)}`)} <button class="btn small" id="b-live" type="button">Back to game ${icons.last}</button>`;
       $('#b-live', st).addEventListener('click', () => goTo(state.moves.length));
     } else if (state.over) {
-      const r = userResult(state);
+      const r = friend ? 'draw' : userResult(state);
       st.classList.add(r === 'win' ? 'ok' : r === 'loss' ? 'bad' : 'info');
       st.textContent = resultText(state, level);
+    } else if (friend) {
+      st.classList.add('info');
+      st.textContent = `${chess.turn() === 'w' ? 'White' : 'Black'} to move${chess.inCheck() ? ' (check!)' : ''}`;
     } else if (engineState === 'loading') {
       st.innerHTML = '<span class="spinner"></span> Loading engine…';
     } else if (engineState === 'error') {
@@ -320,7 +381,8 @@ function gameView(root, state) {
       st.textContent = chess.inCheck() ? 'Check! Your move.' : 'Your move';
     }
     const busy = state.over;
-    $('#b-hint', root).disabled = busy || chess.turn() !== user;
+    $('#b-hint', root).disabled = busy || !humanTurn();
+    $('#b-draw', root).disabled = busy || state.moves.length < 2;
     $('#b-undo', root).disabled = busy || state.moves.length === 0 || (state.moves.length === 1 && botFirst && !thinking);
     $('#b-resign', root).disabled = busy;
   }
@@ -335,6 +397,7 @@ function gameView(root, state) {
       board.setMovable({ color: null, dests: new Map() });
       board.setPremovable({});
       board.setArrows([]);
+      board.setMarks([]);
       renderBars();
       renderMoves();
       setStatus();
@@ -343,11 +406,12 @@ function gameView(root, state) {
       return;
     }
     board.setPosition(chess.fen(), { lastMove, check: checkSquare(chess), animate });
-    const mine = !state.over && chess.turn() === user;
-    board.setMovable({ color: mine ? colorName(user) : null, dests: mine ? dests(chess) : new Map() });
+    const mine = !state.over && humanTurn();
+    board.setMovable({ color: mine ? colorName(chess.turn()) : null, dests: mine ? dests(chess) : new Map() });
     // while the bot thinks you can queue a premove
-    board.setPremovable(!state.over && !mine ? { color: colorName(user), dests: premoveDests(chess, user) } : {});
+    board.setPremovable(!friend && !state.over && !mine ? { color: colorName(user), dests: premoveDests(chess, user) } : {});
     board.setArrows(hintArrow ? [hintArrow] : []);
+    board.setMarks(threatsOn && !state.over ? threatSquares(chess, user).map(sq => ({ sq, cls: 'threat' })) : []);
     renderBars();
     renderMoves();
     setStatus();
@@ -459,6 +523,8 @@ function gameView(root, state) {
     moveSound(m, chess);
     const over = gameOverInfo(chess);
     if (over) { finish(over.result, over.reason); return true; }
+    if (friend && state.autoflip) board.setOrientation(colorName(chess.turn()));
+    if (!friend) chatAfterMove(m, color);
     save();
     render();
     if (chess.turn() === bot) botTurn();
@@ -474,7 +540,7 @@ function gameView(root, state) {
   }
 
   function userMove(from, to, promo) {
-    if (state.over || chess.turn() !== user || engineState === 'error') return;
+    if (state.over || !humanTurn() || (!friend && engineState === 'error')) return;
     const legal = chess.moves({ verbose: true }).find(m => m.from === from && m.to === to && (!m.promotion || m.promotion === (promo || 'q')));
     if (!legal) return;
     applyMove(from + to + (legal.promotion || ''));
@@ -520,15 +586,15 @@ function gameView(root, state) {
       date: state.startedAt,
       endedAt: state.endedAt,
       userColor: user,
-      botElo: level.max ? 3200 : level.elo,
-      botName: level.name,
-      botLabel: levelLabel(level),
+      ...(friend
+        ? { friend: true, spectator: true, whiteName: 'White', blackName: 'Black', botName: 'Friend', botLabel: '', botElo: null }
+        : { botElo: level.max ? 3200 : level.elo, botName: level.name, botLabel: levelLabel(level) }),
       tc: state.tc,
       moves: state.moves,
       sans: chess.history(),
       result,
       reason,
-      userResult: userResult(state),
+      userResult: friend ? null : userResult(state),
       opening: op ? { eco: op.eco, name: op.name } : null,
       takebacks: state.takebacks,
       hints: state.hints,
@@ -537,6 +603,7 @@ function gameView(root, state) {
     store.set('game:' + state.id, record);
     store.del('play.current');
     sound('end');
+    if (!friend) chatEnd();
     render();
     const after = $('#after', root);
     after.classList.remove('hidden');
@@ -551,14 +618,18 @@ function gameView(root, state) {
     $('#b-rematch', after).addEventListener('click', () => {
       const p = prefs();
       unmount();
-      startNew(root, { ...p, level: state.level, tc: state.tc || 'none', startFen: state.startFen });
+      startNew(root, {
+        ...p, level: state.level, startFen: state.startFen, mode: state.mode || 'bot', autoflip: state.autoflip,
+        tc: state.tcCustom ? 'custom' : (state.tc || 'none'),
+        custom: state.tcCustom ? { min: state.tcCustom.base / 60000, inc: state.tcCustom.inc / 1000 } : p.custom,
+      });
     });
     $('#b-new', after).addEventListener('click', () => { unmount(); setupView(root); });
     after.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
   }
 
   async function hint() {
-    if (state.over || chess.turn() !== user) return;
+    if (state.over || !humanTurn()) return;
     if (view != null) { view = null; render(false); }
     const fen = chess.fen();
     const btn = $('#b-hint', root);
@@ -579,7 +650,8 @@ function gameView(root, state) {
     if (state.over) return;
     view = null;
     let n;
-    if (thinking || chess.turn() === bot) {
+    if (friend) n = 1;
+    else if (thinking || chess.turn() === bot) {
       thinkToken++;
       thinking = false;
       botEngine.cancel();
@@ -593,9 +665,9 @@ function gameView(root, state) {
     if (n <= 0) { toast('Nothing to take back'); render(false); return; }
     // clocks go back to where they stood, except that your own thinking time is never refunded
     if (state.clocks) {
-      const liveUser = live(user);
       const snap = state.clockLog?.[state.moves.length - n] || state.clocks;
-      state.clocks = { [bot]: snap[bot], [user]: Math.min(liveUser, snap[user]) };
+      if (friend) state.clocks = { w: Math.min(live('w'), snap.w), b: Math.min(live('b'), snap.b) };
+      else state.clocks = { [bot]: snap[bot], [user]: Math.min(live(user), snap[user]) };
     }
     state.moves.splice(-n, n);
     if (state.clockLog) state.clockLog.length = state.moves.length + 1;
@@ -606,6 +678,7 @@ function gameView(root, state) {
     lastMove = h.length ? [h[h.length - 1].from, h[h.length - 1].to] : null;
     hintArrow = null;
     turnStart = performance.now();
+    if (friend && state.autoflip) board.setOrientation(colorName(chess.turn()));
     save();
     render();
     if (chess.turn() === bot) botTurn();
@@ -613,9 +686,92 @@ function gameView(root, state) {
 
   async function resign() {
     if (state.over) return;
+    if (friend) {
+      const side = chess.turn();
+      if (await confirm(`${side === 'w' ? 'White' : 'Black'} resigns?`, '<p class="muted">The side to move gives up the game.</p>', 'Resign', true)) {
+        if (!state.over) finish(side === 'w' ? '0-1' : '1-0', 'resignation');
+      }
+      return;
+    }
     if (await confirm('Resign this game?', '<p class="muted">The game will be saved as a loss and you can review it.</p>', 'Resign', true)) {
       if (!state.over) finish(user === 'w' ? '0-1' : '1-0', 'resignation');
     }
+  }
+
+  // A draw offer: a friend is asked; a bot accepts only when it is not better and the game has gone on a while
+  async function offerDraw() {
+    if (state.over) return;
+    if (friend) {
+      if (await confirm('Agree to a draw?', '<p class="muted">Both players accept a draw.</p>', 'Draw', false)) {
+        if (!state.over) finish('1/2-1/2', 'agreement');
+      }
+      return;
+    }
+    if (state.moves.length < drawBlockedUntil) { say(`Let's play a few more moves first.`, true); return; }
+    const btn = $('#b-draw', root);
+    btn.disabled = true;
+    const fen = chess.fen();
+    const r = await hintEngine.analyze(fen, { depth: 12, movetime: 800, startFen, moves: state.moves });
+    if (!alive || state.over) return;
+    setStatus();
+    if (chess.fen() !== fen) return;
+    const line = r?.lines?.[0];
+    const white = line ? toWhite(line, chess.turn()) : { cp: 0, mate: null };
+    const sign = bot === 'w' ? 1 : -1;
+    const forBot = white.mate != null ? Math.sign(white.mate) * sign * 10000 : (white.cp || 0) * sign;
+    // weaker bots are a little more willing; nobody takes a draw early unless clearly worse
+    const limit = level.elo < 1000 ? 60 : level.elo < 1600 ? 30 : 15;
+    const accept = forBot <= limit && (state.moves.length >= 20 || forBot < -150);
+    if (accept) {
+      say(pickLine(['Fair enough, a draw it is.', 'Draw accepted. Well played!', "OK, let's call it a draw."]), true);
+      finish('1/2-1/2', 'agreement');
+    } else {
+      drawBlockedUntil = state.moves.length + 6;
+      say(pickLine(forBot > limit ? ['No thanks, I like my position.', "I think I'm better here. Let's play on!", 'Not yet!'] : ["It's too early for a draw. Let's play!", "Let's keep going a bit."]), true);
+    }
+  }
+
+  // ---------- bot chat: short lines from the bot, shown in a bubble that fades ----------
+  function pickLine(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function say(text, force = false) {
+    if (friend || (!force && settings.botChat === false) || !alive) return;
+    const el = $('#chat', root);
+    if (!el) return;
+    el.innerHTML = `<b>${esc(level.name)}:</b> ${esc(text)}`;
+    el.classList.remove('hidden');
+    clearTimeout(chatTimer);
+    chatTimer = setTimeout(() => el.classList.add('hidden'), 4200);
+  }
+  const tier = () => level.max || level.elo >= 1800 ? 'strong' : level.elo >= 1000 ? 'mid' : 'easy';
+  const LINES = {
+    hello: { easy: ["Hi! I'm still learning, go easy on me!", "Hello! Let's have fun."], mid: ['Good luck, have fun!', 'Ready when you are.'], strong: ["Let's see what you've got.", "Good luck. You'll need it!"] },
+    gain: { easy: ['Ooh, I got something!', 'Yay, a free piece!'], mid: ['Thanks for that!', "I'll take it."], strong: ['A free gift. Thank you.', 'That one was hanging.'] },
+    loss: { easy: ['Oh no, my piece!', "Oops, I didn't see that."], mid: ['Hmm, nice shot.', 'I missed that one.'], strong: ['Well spotted.', 'Hm. Good move.'] },
+    check: { easy: ['Check! Did I do that right?'], mid: ['Check!'], strong: ['Check.'] },
+    win: { easy: ['I won?! Wow!'], mid: ['Good game! Want a rematch?'], strong: ['Good game. Review it to see where it turned.'] },
+    lose: { easy: ["You're really good! Good game!"], mid: ['Well played! You earned that.'], strong: ['Impressive. Well played.'] },
+    draw: { easy: ['A draw! That was close.'], mid: ['A draw. Good fight!'], strong: ['A fair result.'] },
+  };
+  function chatAfterMove(m, color) {
+    const ply = state.moves.length;
+    if (m.captured) {
+      const v = { p: 1, n: 3, b: 3, r: 5, q: 9 }[m.captured];
+      // only real gains: a piece taken that cannot simply be taken back
+      const back = chess.moves({ verbose: true }).some(x => x.to === m.to && x.captured);
+      if (v >= 3 && !back && ply - lastChatPly >= 2) {
+        lastChatPly = ply;
+        say(pickLine(LINES[color === bot ? 'gain' : 'loss'][tier()]));
+        return;
+      }
+    }
+    if (color === bot && chess.inCheck() && Math.random() < 0.25 && ply - lastChatPly >= 4) {
+      lastChatPly = ply;
+      say(pickLine(LINES.check[tier()]));
+    }
+  }
+  function chatEnd() {
+    const r = userResult(state);
+    say(pickLine(LINES[r === 'win' ? 'lose' : r === 'loss' ? 'win' : 'draw'][tier()]));
   }
 
   $('#b-hint', root).addEventListener('click', hint);
@@ -644,6 +800,13 @@ function gameView(root, state) {
   };
   document.addEventListener('keydown', onKey);
   $('#b-resign', root).addEventListener('click', resign);
+  $('#b-draw', root).addEventListener('click', offerDraw);
+  $('#n-threats', root)?.addEventListener('click', () => {
+    threatsOn = !threatsOn;
+    store.setSettings({ showThreats: threatsOn });
+    $('#n-threats', root).setAttribute('aria-pressed', String(threatsOn));
+    render(false);
+  });
 
   let ticks = 0;
   const tick = setInterval(() => {
@@ -668,6 +831,7 @@ function gameView(root, state) {
       alive = false;
       save();
       clearInterval(tick);
+      clearTimeout(chatTimer);
       thinkToken++;
       botEngine.cancel();
       hintEngine.cancel();
@@ -680,7 +844,9 @@ function gameView(root, state) {
   };
 
   render(false);
-  botEngine.ready.then(() => {
+  if (!friend && !state.moves.length) setTimeout(() => say(pickLine(LINES.hello[tier()])), 400);
+  if (friend) { engineState = 'ready'; setStatus(); }
+  else botEngine.ready.then(() => {
     if (!alive) return;
     engineState = 'ready';
     setStatus();
@@ -725,6 +891,25 @@ export function premoveDests(chess, color) {
   return map;
 }
 
+/**
+ * Your pieces the opponent can win right now: attacked and undefended, or attacked by a cheaper piece.
+ * (A simple check, like chess.com's "show threats"; the king is never listed.)
+ */
+export function threatSquares(chess, color) {
+  const V = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+  const opp = color === 'w' ? 'b' : 'w';
+  const out = [];
+  for (const row of chess.board()) for (const p of row) {
+    if (!p || p.color !== color || p.type === 'k') continue;
+    const att = chess.attackers(p.square, opp);
+    if (!att.length) continue;
+    const def = chess.attackers(p.square, color);
+    const cheapest = Math.min(...att.map(sq => V[chess.get(sq).type]));
+    if (!def.length || cheapest < V[p.type]) out.push(p.square);
+  }
+  return out;
+}
+
 export function userResult(g) {
   if (g.result === '1/2-1/2') return 'draw';
   const whiteWon = g.result === '1-0';
@@ -736,7 +921,8 @@ function resultText(state, level) {
   const why = {
     checkmate: 'by checkmate', resignation: 'by resignation', timeout: 'on time',
   }[state.reason] || `by ${state.reason}`;
-  if (r === 'draw') return `Draw (${state.reason})`;
+  if (r === 'draw') return `Draw (${state.reason === 'agreement' ? 'agreed' : state.reason})`;
+  if (state.mode === 'friend') return `${state.result === '1-0' ? 'White' : 'Black'} won ${why}!`;
   if (r === 'win') return `You won ${why}!`;
   return `${level.name} won ${why}`;
 }

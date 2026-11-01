@@ -37,9 +37,12 @@ export function mount(root) {
           </div>
         </div>
         <label class="toggle"><span>Show coordinates</span><input type="checkbox" id="s-coords" ${s.coords ? 'checked' : ''}></label>
+        <label class="toggle"><span>Show legal moves</span><input type="checkbox" id="s-dests" ${s.showDests !== false ? 'checked' : ''}></label>
         <label class="toggle"><span>Animate pieces</span><input type="checkbox" id="s-anim" ${s.animation ? 'checked' : ''}></label>
         <label class="toggle"><span>Always promote to a queen</span><input type="checkbox" id="s-autoq" ${s.autoQueen ? 'checked' : ''}></label>
         <label class="toggle"><span>Evaluation bar in games vs bots</span><input type="checkbox" id="s-peval" ${s.playEval ? 'checked' : ''}></label>
+        <label class="toggle"><span>Show threats in games vs bots</span><input type="checkbox" id="s-threats" ${s.showThreats ? 'checked' : ''}></label>
+        <label class="toggle"><span>Bot chat</span><input type="checkbox" id="s-chat" ${s.botChat !== false ? 'checked' : ''}></label>
         <label class="toggle"><span>Move sounds</span><input type="checkbox" id="s-sound" ${s.sound ? 'checked' : ''}></label>
       </section>
       <section class="card stack">
@@ -90,6 +93,9 @@ export function mount(root) {
   $('#s-anim', root).addEventListener('change', (e) => store.setSettings({ animation: e.target.checked }));
   $('#s-autoq', root).addEventListener('change', (e) => { store.setSettings({ autoQueen: e.target.checked }); applyTheme(); });
   $('#s-peval', root).addEventListener('change', (e) => store.setSettings({ playEval: e.target.checked }));
+  $('#s-dests', root).addEventListener('change', (e) => { store.setSettings({ showDests: e.target.checked }); applyTheme(); });
+  $('#s-threats', root).addEventListener('change', (e) => store.setSettings({ showThreats: e.target.checked }));
+  $('#s-chat', root).addEventListener('change', (e) => store.setSettings({ botChat: e.target.checked }));
   $('#s-sound', root).addEventListener('change', (e) => store.setSettings({ sound: e.target.checked }));
 
   $('#s-export', root).addEventListener('click', () => {
