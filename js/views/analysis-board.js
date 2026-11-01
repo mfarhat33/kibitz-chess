@@ -1,10 +1,10 @@
 // Analysis board: analyse any position with Stockfish's top lines, import PGN/FEN, send games to review.
-import { Board } from '../board.js';
+import { Board, pieceUrl } from '../board.js';
 import { Chess, dests, checkSquare, playUci, uciToMove, uciLineToSan, formatLine, START_FEN } from '../chessutil.js';
 import { getEngine, formatScore, toWhite } from '../engine.js';
 import { winPct } from '../analysis.js';
 import * as store from '../store.js';
-import { icons, esc, toast, dialog, $, moveSound } from '../ui.js';
+import { icons, esc, toast, dialog, $, moveSound, downloadFile } from '../ui.js';
 import { loadOpenings, openingOf } from '../openings-data.js';
 import { playTabs, playFromPosition } from './tabs.js';
 
@@ -20,6 +20,10 @@ export async function mount(root, params) {
   let ply = Number.isInteger(saved.ply) && !params[0] ? Math.max(0, Math.min(saved.ply, line.length)) : line.length;
   let headers = saved.headers || null;
   let alive = true;
+  // when you branch off a loaded line, the part you replaced is kept so you can go back to it
+  let mainLine = Array.isArray(saved.mainLine) ? saved.mainLine : null;
+  let engineOn = saved.engineOn !== false;
+  let editing = null;
   const settings = store.getSettings();
 
   root.innerHTML = `
@@ -40,12 +44,17 @@ export async function mount(root, params) {
         </div>
       </div>
       <div class="side-col">
+        <section class="card stack hidden" id="a-editor"></section>
         <section class="card stack" id="a-lines"></section>
         <section class="card stack">
           <div class="row between"><h3 style="margin:0">Moves</h3><span class="tiny muted" id="a-opening"></span></div>
           <div class="moves" id="a-moves"></div>
+          <div class="status info small hidden" id="a-branch"></div>
           <div class="row">
             <button class="btn small" id="a-import" type="button">${icons.upload} Load PGN / FEN</button>
+            <button class="btn small" id="a-edit" type="button">${icons.settings} Set up position</button>
+            <button class="btn small" id="a-copyfen" type="button">Copy FEN</button>
+            <button class="btn small" id="a-copypgn" type="button">Copy PGN</button>
             <button class="btn small" id="a-review" type="button">${icons.eye} Review this game</button>
             <button class="btn small" id="a-play" type="button">${icons.start} Play vs bot from here</button>
             <button class="btn small" id="a-clear" type="button">${icons.retry} New board</button>
@@ -73,13 +82,17 @@ export async function mount(root, params) {
   }
   function playLineMove(uci) {
     if (line[ply] === uci) ply++;
-    else { line = [...line.slice(0, ply), uci]; ply = line.length; }
+    else {
+      // branching off: remember the original line (once) so it can be restored
+      if (ply < line.length && !mainLine) mainLine = line.slice();
+      line = [...line.slice(0, ply), uci]; ply = line.length;
+    }
     const c = chessAt(ply);
     const h = c.history({ verbose: true });
     moveSound(h[h.length - 1], c);
     update();
   }
-  function persist() { store.set('analysis.board', { startFen, line, ply, headers, orientation: board.orientation }); }
+  function persist() { store.set('analysis.board', { startFen, line, ply, headers, orientation: board.orientation, mainLine, engineOn }); }
 
   let token = 0;
   function update() {
@@ -111,6 +124,16 @@ export async function mount(root, params) {
     const op = startFen === START_FEN ? openingOf(line.slice(0, ply)) : null;
     $('#a-opening', root).textContent = op ? `${op.eco} ${op.name}` : '';
     $('#a-review', root).disabled = line.length < 2;
+    const br = $('#a-branch', root);
+    // the branch notice disappears once the line is back on the original moves
+    if (mainLine && mainLine.length >= line.length && line.every((u, i) => u === mainLine[i])) mainLine = mainLine.length === line.length ? null : mainLine;
+    br.classList.toggle('hidden', !mainLine);
+    if (mainLine) {
+      let at = 0;
+      while (at < line.length && line[at] === mainLine[at]) at++;
+      br.innerHTML = `You are trying your own moves from move ${Math.floor(at / 2) + 1}. <button class="btn small" id="a-mainline" type="button">${icons.retry} Back to the main line</button>`;
+      $('#a-mainline', br).addEventListener('click', () => { line = mainLine; mainLine = null; ply = Math.min(at, line.length); update(); });
+    }
     $('#a-headers', root).textContent = headers ? `${headers.White || '?'} vs ${headers.Black || '?'}${headers.Result ? ` · ${headers.Result}` : ''}${headers.Date ? ` · ${headers.Date}` : ''}` : '';
   }
 
@@ -119,13 +142,24 @@ export async function mount(root, params) {
     eng.cancel();
     const t = ++token;
     const fen = c.fen();
+    const engineToggle = () => {
+      el.querySelector('#a-engine')?.addEventListener('click', () => { engineOn = !engineOn; persist(); analyse(chessAt(ply)); });
+    };
+    if (!engineOn) {
+      el.innerHTML = `<div class="row between"><h3 style="margin:0">Engine</h3><button class="btn small" id="a-engine" type="button" aria-pressed="false">Turn on</button></div><div class="muted small">Stockfish is off. Think it through yourself, then turn it on to check.</div>`;
+      setBar({ cp: 0 });
+      board.setArrows([]);
+      engineToggle();
+      return;
+    }
     if (c.isGameOver()) {
       el.innerHTML = `<h3 style="margin:0">Engine</h3><div class="muted small">${c.isCheckmate() ? 'Checkmate.' : 'Draw.'}</div>`;
       setBar(c.isCheckmate() ? { mate: 0, win: c.turn() === 'w' ? 'b' : 'w' } : { cp: 0 });
       board.setArrows([]);
       return;
     }
-    el.innerHTML = `<div class="row between"><h3 style="margin:0">Engine</h3><span class="tiny muted" id="a-depth">starting…</span></div><div id="a-pv" class="stack" style="gap:6px"></div>`;
+    el.innerHTML = `<div class="row between"><h3 style="margin:0">Engine</h3><span class="row nowrap"><span class="tiny muted" id="a-depth">starting…</span><button class="btn small" id="a-engine" type="button" aria-pressed="true">Turn off</button></span></div><div id="a-pv" class="stack" style="gap:6px"></div>`;
+    engineToggle();
     const n = Math.min(3, c.moves().length);
     const show = (lines) => {
       if (!alive || t !== token || !lines.length) return;
@@ -175,7 +209,7 @@ export async function mount(root, params) {
     try {
       if (looksFen) {
         const c = new Chess(text);
-        startFen = c.fen(); line = []; ply = 0; headers = null;
+        startFen = c.fen(); line = []; ply = 0; headers = null; mainLine = null;
         toast('Position loaded');
       } else {
         const c = new Chess();
@@ -187,6 +221,7 @@ export async function mount(root, params) {
         line = hist.map(m => m.from + m.to + (m.promotion || ''));
         ply = line.length;
         headers = hdr;
+        mainLine = null;
         toast(`Loaded ${Math.ceil(line.length / 2)} moves`);
       }
       update();
@@ -224,7 +259,7 @@ export async function mount(root, params) {
     location.hash = '#/review/' + id;
   }
 
-  $('#a-moves', root).addEventListener('click', (e) => { const m = e.target.closest('.mv[data-i]'); if (m) { ply = +m.dataset.i + 1; update(); } });
+  $('#a-moves', root).addEventListener('click', (e) => { const m = e.target.closest('.mv[data-i]'); if (m && !editing) { ply = +m.dataset.i + 1; update(); } });
   $('#a-first', root).addEventListener('click', () => { ply = 0; update(); });
   $('#a-back', root).addEventListener('click', () => { if (ply > 0) { ply--; update(); } });
   $('#a-fwd', root).addEventListener('click', () => { if (ply < line.length) { ply++; update(); } });
@@ -235,9 +270,142 @@ export async function mount(root, params) {
   $('#a-play', root).addEventListener('click', async () => {
     if ((await playFromPosition(chessAt(ply).fen())) === 'over') toast('The game is over in this position');
   });
-  $('#a-clear', root).addEventListener('click', () => { startFen = START_FEN; line = []; ply = 0; headers = null; update(); });
+  $('#a-clear', root).addEventListener('click', () => { startFen = START_FEN; line = []; ply = 0; headers = null; mainLine = null; update(); });
+  $('#a-copyfen', root).addEventListener('click', () => copyText(chessAt(ply).fen(), 'FEN copied'));
+  $('#a-copypgn', root).addEventListener('click', () => copyText(pgnText(), 'PGN copied'));
+  $('#a-edit', root).addEventListener('click', () => openEditor(chessAt(ply).fen()));
+
+  async function copyText(text, msg) {
+    try { await navigator.clipboard.writeText(text); toast(msg); }
+    catch { downloadFile(msg.startsWith('FEN') ? 'position.fen' : 'analysis.pgn', text, 'text/plain'); toast('Copy is blocked here, so it was downloaded instead'); }
+  }
+  function pgnText() {
+    const c = new Chess(startFen);
+    if (startFen !== START_FEN) { c.setHeader('SetUp', '1'); c.setHeader('FEN', startFen); }
+    for (const [k, v] of Object.entries(headers || {})) if (k !== 'SetUp' && k !== 'FEN') { try { c.setHeader(k, String(v)); } catch { /* skip odd headers */ } }
+    for (const u of line) if (!playUci(c, u)) break;
+    return c.pgn();
+  }
+
+  // ---------- position editor: tap a square to place the chosen piece ----------
+  function openEditor(fen) {
+    eng.cancel(); token++;
+    const parts = fen.split(' ');
+    const map = new Map();
+    parts[0].split('/').forEach((row, r) => {
+      let f = 0;
+      for (const ch of row) {
+        if (/\d/.test(ch)) f += +ch;
+        else { map.set('abcdefgh'[f] + (8 - r), (ch === ch.toUpperCase() ? 'w' : 'b') + ch.toUpperCase()); f++; }
+      }
+    });
+    editing = { map, turn: parts[1] || 'w', tool: 'wP', castle: parts[2] || '-' };
+    const ed = $('#a-editor', root);
+    ed.classList.remove('hidden');
+    $('#a-lines', root).classList.add('hidden');
+    const tools = ['wK', 'wQ', 'wR', 'wB', 'wN', 'wP', 'bK', 'bQ', 'bR', 'bB', 'bN', 'bP'];
+    ed.innerHTML = `
+      <div class="row between"><h3 style="margin:0">Set up a position</h3><span class="tiny muted">tap squares to place</span></div>
+      <div class="editor-tools" id="e-tools">
+        ${tools.map(t => `<button type="button" class="chip" data-t="${t}" aria-label="${t[0] === 'w' ? 'White' : 'Black'} ${({ K: 'king', Q: 'queen', R: 'rook', B: 'bishop', N: 'knight', P: 'pawn' })[t[1]]}"><img src="${pieceUrl(t)}" alt="" width="30" height="30"></button>`).join('')}
+        <button type="button" class="chip" data-t="x" aria-label="Eraser">${icons.trash}</button>
+      </div>
+      <div class="seg" id="e-turn" role="group" aria-label="Side to move"><button type="button" data-v="w">White to move</button><button type="button" data-v="b">Black to move</button></div>
+      <div class="row small" id="e-castle">
+        ${[['K', 'White O-O'], ['Q', 'White O-O-O'], ['k', 'Black O-O'], ['q', 'Black O-O-O']].map(([c, l]) => `<label class="row nowrap" style="gap:4px"><input type="checkbox" data-c="${c}" ${editing.castle.includes(c) ? 'checked' : ''}>${l}</label>`).join('')}
+      </div>
+      <div class="row">
+        <button class="btn small" id="e-start" type="button">Start position</button>
+        <button class="btn small" id="e-clear" type="button">${icons.trash} Clear board</button>
+      </div>
+      <div class="status bad small hidden" id="e-err"></div>
+      <div class="grid-2">
+        <button class="btn" id="e-cancel" type="button">Cancel</button>
+        <button class="btn primary" id="e-done" type="button">${icons.check} Done</button>
+      </div>`;
+    const markTool = () => ed.querySelectorAll('#e-tools [data-t]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === editing.tool)));
+    const markTurn = () => ed.querySelectorAll('#e-turn button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === editing.turn)));
+    markTool(); markTurn();
+    $('#e-tools', ed).addEventListener('click', (e) => { const b = e.target.closest('[data-t]'); if (b) { editing.tool = b.dataset.t; markTool(); } });
+    $('#e-turn', ed).addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) { editing.turn = b.dataset.v; markTurn(); } });
+    $('#e-start', ed).addEventListener('click', () => { editing.map.clear(); const f = START_FEN.split(' ')[0]; loadPlacement(f); editing.turn = 'w'; markTurn(); ed.querySelectorAll('#e-castle input').forEach(i => { i.checked = true; }); drawEditor(); });
+    $('#e-clear', ed).addEventListener('click', () => { editing.map.clear(); drawEditor(); });
+    $('#e-cancel', ed).addEventListener('click', closeEditor);
+    $('#e-done', ed).addEventListener('click', finishEditor);
+    board.setMovable({});
+    board.setArrows([]);
+    board.opts.onSquare = (sq) => {
+      if (!editing) return;
+      const cur = editing.map.get(sq);
+      if (editing.tool === 'x' || cur === editing.tool) editing.map.delete(sq);
+      else editing.map.set(sq, editing.tool);
+      drawEditor();
+    };
+    drawEditor();
+  }
+  function loadPlacement(placement) {
+    placement.split('/').forEach((row, r) => {
+      let f = 0;
+      for (const ch of row) {
+        if (/\d/.test(ch)) f += +ch;
+        else { editing.map.set('abcdefgh'[f] + (8 - r), (ch === ch.toUpperCase() ? 'w' : 'b') + ch.toUpperCase()); f++; }
+      }
+    });
+  }
+  function placementOf(map) {
+    const rows = [];
+    for (let r = 8; r >= 1; r--) {
+      let row = '', empty = 0;
+      for (const f of 'abcdefgh') {
+        const p = map.get(f + r);
+        if (!p) { empty++; continue; }
+        if (empty) { row += empty; empty = 0; }
+        row += p[0] === 'w' ? p[1] : p[1].toLowerCase();
+      }
+      rows.push(row + (empty || ''));
+    }
+    return rows.join('/');
+  }
+  function drawEditor() {
+    board.setPosition(placementOf(editing.map) + ' w - - 0 1', { lastMove: null, check: null, animate: false });
+    $('#e-err', root)?.classList.add('hidden');
+  }
+  function editorFen() {
+    const m = editing.map;
+    const at = (sq, p) => m.get(sq) === p;
+    // keep only castling rights that the pieces on the board still allow
+    let castle = '';
+    const want = new Set([...root.querySelectorAll('#e-castle input:checked')].map(i => i.dataset.c));
+    if (want.has('K') && at('e1', 'wK') && at('h1', 'wR')) castle += 'K';
+    if (want.has('Q') && at('e1', 'wK') && at('a1', 'wR')) castle += 'Q';
+    if (want.has('k') && at('e8', 'bK') && at('h8', 'bR')) castle += 'k';
+    if (want.has('q') && at('e8', 'bK') && at('a8', 'bR')) castle += 'q';
+    return `${placementOf(m)} ${editing.turn} ${castle || '-'} - 0 1`;
+  }
+  function finishEditor() {
+    const fen = editorFen();
+    const err = (msg) => { const e = $('#e-err', root); e.textContent = msg; e.classList.remove('hidden'); };
+    const pieces = [...editing.map.values()];
+    if (pieces.filter(p => p === 'wK').length !== 1 || pieces.filter(p => p === 'bK').length !== 1) return err('Each side needs exactly one king.');
+    if ([...editing.map.entries()].some(([sq, p]) => p[1] === 'P' && (sq[1] === '1' || sq[1] === '8'))) return err('Pawns cannot stand on the first or last rank.');
+    let c;
+    try { c = new Chess(fen); } catch (e) { return err('That is not a legal position.'); }
+    // the side that is not to move must not be in check
+    const flipped = fen.replace(/ [wb] /, editing.turn === 'w' ? ' b ' : ' w ');
+    try { if (new Chess(flipped).inCheck()) return err(`${editing.turn === 'w' ? 'Black' : 'White'} is in check but it is ${editing.turn === 'w' ? 'White' : 'Black'}'s move. Change the side to move.`); } catch { /* fine */ }
+    startFen = c.fen(); line = []; ply = 0; headers = null; mainLine = null;
+    closeEditor();
+    toast('Position set up');
+  }
+  function closeEditor() {
+    editing = null;
+    board.opts.onSquare = null;
+    $('#a-editor', root).classList.add('hidden');
+    $('#a-lines', root).classList.remove('hidden');
+    update();
+  }
   const onKey = (e) => {
-    if (e.target.closest('input,textarea,select,dialog')) return;
+    if (e.target.closest('input,textarea,select,dialog') || editing) return;
     if (e.key === 'ArrowLeft' && ply > 0) { ply--; update(); e.preventDefault(); }
     else if (e.key === 'ArrowRight' && ply < line.length) { ply++; update(); e.preventDefault(); }
   };

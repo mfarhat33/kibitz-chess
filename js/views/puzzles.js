@@ -85,7 +85,11 @@ async function dailyView(root, isCurrent) {
     el.innerHTML = `<div class="row between"><h3 style="margin:0">Rated ${pz.rating}</h3><a class="tiny" href="https://lichess.org/training/${encodeURIComponent(pz.id)}" target="_blank" rel="noopener">Puzzle ${esc(pz.id)} on Lichess</a></div>
       <div class="theme-tags">${pz.themes.map(t => `<span>${esc(themeName(t))}</span>`).join('')}</div>
       <p class="small muted" style="margin:0">A new daily puzzle appears tomorrow. Keep your streak going!</p>
-      <a class="btn primary block" href="#/puzzles">${icons.next} Rated puzzles</a>`;
+      <div class="grid-2">
+        <button class="btn" id="p-analyse" type="button">${icons.search} Analyse</button>
+        <a class="btn primary" href="#/puzzles">${icons.next} Rated puzzles</a>
+      </div>`;
+    $('#p-analyse', el).addEventListener('click', () => analysePuzzle(pz));
   };
   const player = new PuzzlePlayer(board, pz, {
     onStep: (p) => { if (p.chess.turn() === p.solver) status(`Find the best move for <b>${p.solverName}</b>`); },
@@ -179,8 +183,12 @@ export async function mount(root, params = [], isCurrent = () => true) {
     el.innerHTML = `
       <div class="row between"><h3 style="margin:0">${solved ? 'Solved' : 'Puzzle over'}</h3><a class="tiny" href="https://lichess.org/training/${encodeURIComponent(puzzle.id)}" target="_blank" rel="noopener">Puzzle ${esc(puzzle.id)} on Lichess</a></div>
       <div class="theme-tags">${puzzle.themes.map(t => `<span>${esc(themeName(t))}</span>`).join('')}</div>
-      <button class="btn primary block" id="p-next2" type="button">${icons.next} Next puzzle</button>`;
+      <div class="grid-2">
+        <button class="btn" id="p-analyse" type="button">${icons.search} Analyse</button>
+        <button class="btn primary" id="p-next2" type="button">${icons.next} Next puzzle</button>
+      </div>`;
     $('#p-next2', el).addEventListener('click', () => next());
+    $('#p-analyse', el).addEventListener('click', () => analysePuzzle(puzzle));
     $('#p-next', root).querySelector('span').textContent = 'Next';
   }
 
@@ -278,4 +286,11 @@ export async function mount(root, params = [], isCurrent = () => true) {
   ctx = { destroy() { alive = false; player?.destroy(); board.destroy(); } };
   renderHeader();
   next();
+}
+
+/** Opens a puzzle on the analysis board at the position the solver faced, with the full solution as the line. */
+function analysePuzzle(pz) {
+  const solverWhite = pz.fen.split(' ')[1] === 'b'; // the first move is the opponent's
+  store.set('analysis.board', { startFen: pz.fen, line: pz.moves.slice(), ply: 1, headers: null, orientation: solverWhite ? 'white' : 'black' });
+  location.hash = '#/analysis';
 }

@@ -94,7 +94,7 @@ function persist(key, value) {
 // ---------- typed helpers ----------
 export function getSettings() {
   return {
-    theme: 'system', board: 'slate', pieces: 'cburnett', autoQueen: false, playEval: false, showThreats: false, botChat: true, showDests: true, sound: true, coords: true, animation: true,
+    theme: 'system', board: 'slate', pieces: 'cburnett', autoQueen: false, playEval: false, showThreats: false, botChat: true, showDests: true, premoves: true, lastMove: true, sound: true, coords: true, animation: true,
     reviewDepth: 'standard', ...get('settings', {}),
   };
 }
@@ -203,7 +203,7 @@ function sanitize(data) {
         theme: ['system', 'light', 'dark'].includes(v?.theme) ? v.theme : 'system',
         board: ['slate', 'walnut', 'ocean', 'olive', 'mono'].includes(v?.board) ? v.board : 'slate',
         pieces: ['cburnett', 'merida', 'chessnut', 'fantasy'].includes(v?.pieces) ? v.pieces : 'cburnett',
-        sound: v?.sound !== false, coords: v?.coords !== false, animation: v?.animation !== false, autoQueen: v?.autoQueen === true, playEval: v?.playEval === true, showThreats: v?.showThreats === true, botChat: v?.botChat !== false, showDests: v?.showDests !== false,
+        sound: v?.sound !== false, coords: v?.coords !== false, animation: v?.animation !== false, autoQueen: v?.autoQueen === true, playEval: v?.playEval === true, showThreats: v?.showThreats === true, botChat: v?.botChat !== false, showDests: v?.showDests !== false, premoves: v?.premoves !== false, lastMove: v?.lastMove !== false,
         reviewDepth: ['fast', 'standard', 'deep'].includes(v?.reviewDepth) ? v.reviewDepth : 'standard',
       }; break;
       default: break; // unknown keys (and in-progress state) are not imported

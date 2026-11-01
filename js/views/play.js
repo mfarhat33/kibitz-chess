@@ -250,6 +250,9 @@ function gameView(root, state) {
   let thinking = false;
   let turnStart = performance.now();
   let hintArrow = null;
+  // hints come in two steps, like chess.com: first the piece to move, then the move itself
+  let hintSq = null;
+  let hintBest = null;
   let engineState = 'loading';
   let alive = true;
   let threatsOn = !friend && !!settings.showThreats;
@@ -409,9 +412,12 @@ function gameView(root, state) {
     const mine = !state.over && humanTurn();
     board.setMovable({ color: mine ? colorName(chess.turn()) : null, dests: mine ? dests(chess) : new Map() });
     // while the bot thinks you can queue a premove
-    board.setPremovable(!friend && !state.over && !mine ? { color: colorName(user), dests: premoveDests(chess, user) } : {});
+    board.setPremovable(!friend && settings.premoves !== false && !state.over && !mine ? { color: colorName(user), dests: premoveDests(chess, user) } : {});
     board.setArrows(hintArrow ? [hintArrow] : []);
-    board.setMarks(threatsOn && !state.over ? threatSquares(chess, user).map(sq => ({ sq, cls: 'threat' })) : []);
+    board.setMarks([
+      ...(threatsOn && !state.over ? threatSquares(chess, user).map(sq => ({ sq, cls: 'threat' })) : []),
+      ...(hintSq && !hintArrow ? [{ sq: hintSq, cls: 'hint-sq' }] : []),
+    ]);
     renderBars();
     renderMoves();
     setStatus();
@@ -519,7 +525,7 @@ function gameView(root, state) {
     if (state.moves.length === 2) turnStart = performance.now();
     view = null;
     lastMove = [m.from, m.to];
-    hintArrow = null;
+    hintArrow = null; hintSq = null; hintBest = null;
     moveSound(m, chess);
     const over = gameOverInfo(chess);
     if (over) { finish(over.result, over.reason); return true; }
@@ -632,6 +638,13 @@ function gameView(root, state) {
     if (state.over || !humanTurn()) return;
     if (view != null) { view = null; render(false); }
     const fen = chess.fen();
+    // second press on the same position: show the whole move
+    if (hintBest?.fen === fen && hintSq) {
+      const m = uciToMove(hintBest.uci);
+      hintArrow = { from: m.from, to: m.to, color: 'rgba(32,150,210,.85)' };
+      render(false);
+      return;
+    }
     const btn = $('#b-hint', root);
     btn.disabled = true;
     hintEngine.cancel();
@@ -640,9 +653,12 @@ function gameView(root, state) {
     setStatus();
     if (!r?.bestmove || chess.fen() !== fen) return;
     state.hints++;
-    const m = uciToMove(r.bestmove);
-    hintArrow = { from: m.from, to: m.to, color: 'rgba(32,150,210,.85)' };
-    board.setArrows([hintArrow]);
+    hintBest = { fen, uci: r.bestmove };
+    hintSq = uciToMove(r.bestmove).from;
+    render(false);
+    const st = $('#status', root);
+    st.className = 'status info';
+    st.textContent = 'Hint: move the highlighted piece. Press Hint again to see the move.';
     save();
   }
 
@@ -676,7 +692,7 @@ function gameView(root, state) {
     for (const u of state.moves) playUci(chess, u);
     const h = chess.history({ verbose: true });
     lastMove = h.length ? [h[h.length - 1].from, h[h.length - 1].to] : null;
-    hintArrow = null;
+    hintArrow = null; hintSq = null; hintBest = null;
     turnStart = performance.now();
     if (friend && state.autoflip) board.setOrientation(colorName(chess.turn()));
     save();

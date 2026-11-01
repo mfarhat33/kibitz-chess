@@ -631,3 +631,14 @@ a.icon-btn { color: var(--text); }
 @media (min-width: 900px) { .bot-chat { left: 2px; } .play-stage.with-evalbar .bot-chat { left: 36px; } }
 :root[data-dests="0"] .kb-sq.dest::after { display: none; }
 #tc-custom input { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; }
+
+/* right-click circles in colours (Shift = red, Alt/Ctrl = blue, Shift+Alt = yellow) */
+.kb-sq.mark-circle.mc-r::before { border-color: rgba(200, 40, 40, .8); }
+.kb-sq.mark-circle.mc-b::before { border-color: rgba(32, 110, 210, .8); }
+.kb-sq.mark-circle.mc-y::before { border-color: rgba(214, 160, 0, .85); }
+.kb-sq.hint-sq { box-shadow: inset 0 0 0 4px rgba(32, 150, 210, .9); background-image: radial-gradient(rgba(32, 150, 210, .35), rgba(32, 150, 210, .12)); }
+:root[data-lastmove="0"] .kb-sq.last { background: none !important; box-shadow: none !important; }
+.editor-tools { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.editor-tools .chip { padding: 4px; display: grid; place-items: center; min-height: 42px; }
+.editor-tools .chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.editor-tools .chip svg { width: 20px; height: 20px; }

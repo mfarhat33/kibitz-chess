@@ -91,6 +91,7 @@ export async function mount(root, [id], isCurrent = () => true) {
   // ---------- best line: step through the engine's suggested continuation on the board ----------
   let line = null;
   function startLine(i) {
+    explore = null;
     const r = review();
     const pv = r?.pv?.[i];
     if (!pv?.length) return;
@@ -113,6 +114,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     const k = line.ply;
     const c = new Chess(line.fens[k]);
     board.setPosition(line.fens[k], { lastMove: k ? line.moves[k - 1] : null, check: checkSquare(c) });
+    board.setMovable({});
     board.setArrows([]);
     board.setBadges([]);
     if (withSound && k) { const prev = new Chess(line.fens[k - 1]); moveSound(playUci(prev, line.ucis[k - 1]), prev); }
@@ -149,8 +151,193 @@ export async function mount(root, [id], isCurrent = () => true) {
     el.querySelector('.line-moves').addEventListener('click', (e) => { const m = e.target.closest('[data-l]'); if (m) lineStep(+m.dataset.l + 1); });
   }
 
+  // ---------- explore: drag any piece to try your own moves; Stockfish grades them and shows the best reply ----------
+  let explore = null;
+  const exploreCache = new Map();
+  const BEST_ARROW = 'rgba(16,150,110,.85)';
+  const REPLY_ARROW = 'rgba(32,120,220,.85)';
+
+  // the board can always be moved in review (except while the engine is busy with the full analysis)
+  function armBoard(fen) {
+    const c = new Chess(fen);
+    const canMove = review() && !analysing && !c.isGameOver();
+    board.setMovable(canMove ? { color: colorName(c.turn()), dests: dests(c) } : {});
+    board.opts.onMove = canMove ? (from, to, promo) => exploreMove(from, to, promo) : null;
+  }
+
+  function exploreMove(from, to, promo) {
+    if (retry || !review() || analysing) return;
+    line = null;
+    if (!explore) {
+      const p = cur + 1;
+      const r = review();
+      explore = { base: p, fens: [fens[p]], moves: [], sans: [], last: [], labels: [], evals: [r.evals[p]], best: [r.best[p] || null], replyLine: [r.pv?.[p] || []], k: 0, token: 0 };
+    }
+    const k = explore.k;
+    const c = new Chess(explore.fens[k]);
+    const legal = c.moves({ verbose: true }).find(m => m.from === from && m.to === to && (!m.promotion || m.promotion === (promo || 'q')));
+    if (!legal) return;
+    const uci = from + to + (legal.promotion || '');
+    // a move from an earlier point in the line replaces everything after it
+    for (const key of ['moves', 'sans', 'last', 'labels']) explore[key].length = k;
+    for (const key of ['fens', 'evals', 'best', 'replyLine']) explore[key].length = k + 1;
+    const m = playUci(c, uci);
+    explore.moves.push(uci);
+    explore.sans.push(m.san);
+    explore.last.push([m.from, m.to]);
+    explore.labels.push(null);
+    explore.fens.push(c.fen());
+    explore.evals.push(null);
+    explore.best.push(null);
+    explore.replyLine.push([]);
+    explore.k = k + 1;
+    moveSound(m, c);
+    showExplore();
+    gradeExplore(explore.k);
+  }
+
+  async function gradeExplore(k) {
+    const ex = explore;
+    const fen = ex.fens[k];
+    const c = new Chess(fen);
+    const moverColor = ex.fens[k - 1].split(' ')[1];
+    let score, best = null, pv = [];
+    if (c.isCheckmate()) score = { mate: 0, win: moverColor };
+    else if (c.isGameOver()) score = { cp: 0, mate: null };
+    else if (exploreCache.has(fen)) ({ score, best, pv } = exploreCache.get(fen));
+    else {
+      const token = ++ex.token;
+      const turn = c.turn();
+      const res = await getEngine('analysis').analyze(fen, {
+        depth: Math.min(review()?.depth || DEPTHS.standard, 16), movetime: 2500, startFen,
+        moves: [...game.moves.slice(0, ex.base), ...ex.moves.slice(0, k)],
+        onInfo: (lines) => { if (alive && explore === ex && ex.k === k && token === ex.token && lines?.[0]) renderEval(toWhite(lines[0], turn)); },
+      });
+      if (!alive || explore !== ex) return;
+      if (!res?.lines?.[0]) { if (ex.k === k) showExplore('The engine is not available right now.'); return; }
+      score = toWhite(res.lines[0], turn);
+      best = res.lines[0].pv?.[0] || res.bestmove || null;
+      pv = (res.lines[0].pv || []).slice(0, 8);
+      exploreCache.set(fen, { score, best, pv });
+    }
+    ex.evals[k] = score;
+    ex.best[k] = best;
+    ex.replyLine[k] = pv;
+    // grade the move that led here against the position before it (when that one is known)
+    const before = ex.evals[k - 1];
+    if (before) {
+      ex.labels[k - 1] = ex.moves[k - 1] === ex.best[k - 1] ? 'best'
+        : gradeMove(before, score, moverColor, { givesMate: c.isCheckmate() }).label;
+    }
+    // the next move's grade may have been waiting for this evaluation
+    if (ex.fens[k + 1] && ex.evals[k + 1] && !ex.labels[k]) {
+      ex.labels[k] = ex.moves[k] === best ? 'best' : gradeMove(score, ex.evals[k + 1], c.turn(), { givesMate: new Chess(ex.fens[k + 1]).isCheckmate() }).label;
+    }
+    showExplore();
+  }
+
+  function exploreStep(k) {
+    if (!explore) return;
+    const n = Math.max(0, Math.min(explore.moves.length, k));
+    if (n === explore.k) return;
+    const fwd = n > explore.k;
+    explore.k = n;
+    if (fwd) { const prev = new Chess(explore.fens[n - 1]); moveSound(playUci(prev, explore.moves[n - 1]), prev); }
+    showExplore();
+    if (!explore.evals[n] && n > 0) gradeExplore(n);
+  }
+
+  function showExplore(err = '') {
+    const ex = explore;
+    const k = ex.k;
+    const fen = ex.fens[k];
+    const c = new Chess(fen);
+    const baseLast = ex.base > 0 ? (() => { const m = uciToMove(game.moves[ex.base - 1]); return [m.from, m.to]; })() : null;
+    board.setPosition(fen, { lastMove: k ? ex.last[k - 1] : baseLast, check: checkSquare(c) });
+    armBoard(fen);
+    const arrows = [], badges = [];
+    const lab = k ? ex.labels[k - 1] : null;
+    if (k && lab) badges.push({ sq: ex.last[k - 1][1], cls: lab, text: LABEL_GLYPH[lab] });
+    // what the engine would play now (the reply to your move), and what you should have played instead
+    if (ex.best[k] && !c.isGameOver()) { const b = uciToMove(ex.best[k]); arrows.push({ from: b.from, to: b.to, color: REPLY_ARROW }); }
+    if (k && lab && ex.best[k - 1] && ex.best[k - 1] !== ex.moves[k - 1] && BAD_LABELS.includes(lab)) {
+      const b = uciToMove(ex.best[k - 1]);
+      arrows.push({ from: b.from, to: b.to, color: BEST_ARROW });
+    }
+    board.setArrows(arrows);
+    board.setBadges(badges);
+    if (ex.evals[k]) renderEval(ex.evals[k]);
+    // panel
+    const start = new Chess(ex.fens[0]);
+    const no0 = +(ex.fens[0].split(' ')[5] || 1);
+    const shift = start.turn() === 'b' ? 1 : 0;
+    let html = shift ? `<span class="n">${no0}...</span>` : '';
+    ex.sans.forEach((san, j) => {
+      if ((j + shift) % 2 === 0) html += `<span class="n">${no0 + (j + shift) / 2}.</span>`;
+      const l = ex.labels[j];
+      html += `<span class="mvi${j === k - 1 ? ' cur' : ''}" data-x="${j}">${l ? `<i class="q q-${l}" style="width:15px;height:15px;font-size:9px;vertical-align:-2px;margin-right:3px">${LABEL_GLYPH[l]}</i>` : ''}${esc(san)}</span>`;
+    });
+    const sc = ex.evals[k];
+    const toMove = c.turn() === 'w' ? 'White' : 'Black';
+    let verdict = '';
+    if (err) verdict = `<div class="status bad small">${esc(err)}</div>`;
+    else if (k === 0) verdict = `<p class="small" style="margin:0">Drag or tap a piece to try a move. Stockfish rates it and shows the best reply with a blue arrow.</p>`;
+    else if (!lab) verdict = `<div class="status info small"><span class="spinner"></span> Checking ${esc(ex.sans[k - 1])} with Stockfish…</div>`;
+    else {
+      const bestSan = ex.best[k - 1] && ex.best[k - 1] !== ex.moves[k - 1] ? sanOf(ex.fens[k - 1], ex.best[k - 1]) : null;
+      const word = LABEL_TEXT[lab].toLowerCase();
+      const phrase = BAD_LABELS.includes(lab) || /move$/.test(word) ? word : `${word} move`;
+      verdict = `<p class="small" style="margin:0"><b>${esc(ex.sans[k - 1])}</b> is ${/^[aeiou]/i.test(phrase) ? 'an' : 'a'} <span class="tq-${lab}" style="font-weight:700">${phrase}</span>${bestSan && BAD_LABELS.includes(lab) ? `. Better was <b>${esc(bestSan)}</b> (green arrow)` : ''}.</p>`;
+    }
+    let reply = '';
+    if (c.isCheckmate()) reply = `<p class="small" style="margin:0"><b>Checkmate.</b></p>`;
+    else if (c.isGameOver()) reply = `<p class="small" style="margin:0"><b>The game would end in a draw here.</b></p>`;
+    else if (ex.best[k]) {
+      const pvTxt = lineSans(fen, ex.replyLine[k].slice(0, 6));
+      reply = `<p class="small" style="margin:0">Best for ${toMove} now: <b>${esc(sanOf(fen, ex.best[k]))}</b> (blue arrow)${pvTxt ? `, for example <span class="mono">${esc(pvTxt)}</span>` : ''}.</p>`;
+    }
+    const el = $('#explain', root);
+    el.innerHTML = `
+      <div class="explain-head">${icons.search}<span class="grow">Exploring your own line</span>${sc ? `<span class="mono small muted">${formatScore(sc)}</span>` : ''}</div>
+      ${ex.sans.length ? `<div class="moves-inline line-moves" style="flex-wrap:wrap;padding:0">${html}</div>` : ''}
+      ${verdict}
+      ${reply}
+      <div class="row">
+        <button class="btn small" id="e-prev" type="button" aria-label="Back one move in your line" ${k === 0 ? 'disabled' : ''}>${icons.prev}</button>
+        <button class="btn small" id="e-next" type="button" aria-label="Forward one move in your line" ${k >= ex.moves.length ? 'disabled' : ''}>${icons.next}</button>
+        ${ex.best[k] && !c.isGameOver() ? `<button class="btn small" id="e-play" type="button">${icons.start} Play best</button>` : ''}
+        <button class="btn small primary" id="e-back" type="button">Back to the game</button>
+      </div>`;
+    $('#e-prev', el).addEventListener('click', () => exploreStep(ex.k - 1));
+    $('#e-next', el).addEventListener('click', () => exploreStep(ex.k + 1));
+    $('#e-back', el).addEventListener('click', () => go(cur));
+    $('#e-play', el)?.addEventListener('click', () => { const b = uciToMove(ex.best[ex.k]); exploreMove(b.from, b.to, b.promotion); });
+    el.querySelector('.line-moves')?.addEventListener('click', (e) => { const m = e.target.closest('[data-x]'); if (m) exploreStep(+m.dataset.x + 1); });
+  }
+
+  function sanOf(fen, uci) {
+    try { const c = new Chess(fen); return playUci(c, uci)?.san || uci; } catch { return uci; }
+  }
+  function lineSans(fen, ucis) {
+    const c = new Chess(fen);
+    const turn = c.turn();
+    let no = +(fen.split(' ')[5] || 1);
+    const out = [];
+    ucis.forEach((u, j) => {
+      const m = playUci(c, u);
+      if (!m) return;
+      const white = (j % 2 === 0) === (turn === 'w');
+      if (white) out.push(`${no}.`);
+      else if (j === 0) out.push(`${no}...`);
+      out.push(m.san);
+      if (!white) no++;
+    });
+    return out.join(' ');
+  }
+
   function go(i, withSound = false) {
     line = null;
+    explore = null;
     if (retry) exitRetry(false);
     const moved = Math.max(-1, Math.min(game.moves.length - 1, i)) !== cur;
     cur = Math.max(-1, Math.min(game.moves.length - 1, i));
@@ -159,7 +346,7 @@ export async function mount(root, [id], isCurrent = () => true) {
     let last = null;
     if (cur >= 0) { const m = uciToMove(game.moves[cur]); last = [m.from, m.to]; }
     board.setPosition(fens[p], { lastMove: last, check: checkSquare(c) });
-    board.setMovable({});
+    armBoard(fens[p]);
     if (withSound && moved && cur >= 0) {
       const prev = new Chess(fens[cur]);
       moveSound(playUci(prev, game.moves[cur]), prev);
@@ -504,6 +691,10 @@ export async function mount(root, [id], isCurrent = () => true) {
   const onKey = (e) => {
     if (e.target.closest('input,textarea,select,dialog') || retry) return;
     if (line && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { lineStep(line.ply + (e.key === 'ArrowRight' ? 1 : -1)); e.preventDefault(); return; }
+    if (explore && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      if (e.key === 'ArrowLeft' && explore.k === 0) go(cur); else exploreStep(explore.k + (e.key === 'ArrowRight' ? 1 : -1));
+      e.preventDefault(); return;
+    }
     if (e.key === 'ArrowLeft') { go(cur - 1); e.preventDefault(); }
     else if (e.key === 'ArrowRight') { go(cur + 1, true); e.preventDefault(); }
     else if (e.key === 'Home') { go(-1); e.preventDefault(); }
@@ -511,8 +702,8 @@ export async function mount(root, [id], isCurrent = () => true) {
   };
   document.addEventListener('keydown', onKey);
   $('#n-first', root).addEventListener('click', () => go(-1));
-  $('#n-prev', root).addEventListener('click', () => go(cur - 1));
-  $('#n-next', root).addEventListener('click', () => go(cur + 1, true));
+  $('#n-prev', root).addEventListener('click', () => { if (explore) { if (explore.k === 0) go(cur); else exploreStep(explore.k - 1); } else go(cur - 1); });
+  $('#n-next', root).addEventListener('click', () => { if (explore) exploreStep(explore.k + 1); else go(cur + 1, true); });
   $('#n-last', root).addEventListener('click', () => go(game.moves.length - 1));
   $('#n-flip', root).addEventListener('click', () => { board.flip(); renderEval(); });
   $('#moves', root).addEventListener('click', (e) => { const m = e.target.closest('.mv[data-i]'); if (m) go(+m.dataset.i); });

@@ -36,6 +36,15 @@ export function parseBoard(fen) {
 
 const svgNS = 'http://www.w3.org/2000/svg';
 
+const DRAW_COLORS = { g: 'rgba(21,128,61,.75)', r: 'rgba(200,40,40,.75)', b: 'rgba(32,110,210,.75)', y: 'rgba(214,160,0,.8)' };
+function drawColor(e) {
+  const alt = e.altKey || e.ctrlKey || e.metaKey;
+  if (e.shiftKey && alt) return 'y';
+  if (e.shiftKey) return 'r';
+  if (alt) return 'b';
+  return 'g';
+}
+
 export class Board {
   constructor(el, opts = {}) {
     this.el = el;
@@ -289,7 +298,7 @@ export class Board {
       for (const rookSq of this.castleRooks(this.selected)) add(rookSq, 'dest cap castle');
     }
     if (this.hover && this.drag?.started) add(this.hover, this.drag.touch ? 'hover touch' : 'hover');
-    for (const c of this.userCircles) add(c, 'mark-circle');
+    for (const c of this.userCircles) add(c.sq, 'mark-circle mc-' + c.c);
     let html = '';
     for (const [sq, c] of cls) html += `<div class="kb-sq${c}" style="${this.sqStyle(sq)}"></div>`;
     this.sqLayer.innerHTML = html;
@@ -299,7 +308,7 @@ export class Board {
     const all = [...this.arrows, ...this.userArrows.map(a => ({ ...a, color: a.color || 'rgba(21,128,61,.75)' }))];
     // the arrow being drawn with the right button follows the pointer
     if (this.rightStart && this.rightHover && this.rightHover !== this.rightStart) {
-      all.push({ from: this.rightStart, to: this.rightHover, color: 'rgba(21,128,61,.5)' });
+      all.push({ from: this.rightStart, to: this.rightHover, color: DRAW_COLORS[this.rightColor || 'g'].replace(/[\d.]+\)$/, '.5)') });
     }
     let html = '';
     for (const a of all) {
@@ -382,6 +391,7 @@ export class Board {
     const sq = this.squareAt(e.clientX, e.clientY);
     if (e.button === 2) {
       this.rightStart = sq;
+      this.rightColor = drawColor(e);
       this.rightHover = null;
       if (this.premove) this.cancelPremove();
       return;
@@ -502,13 +512,19 @@ export class Board {
       this.rightStart = null;
       this.rightHover = null;
       if (!start || !end) { this.renderArrows(); return; }
+      // like other chess sites: plain = green, Shift = red, Alt/Ctrl = blue, Shift+Alt = yellow
+      const col = drawColor(e) || this.rightColor || 'g';
       if (start === end) {
-        const i = this.userCircles.indexOf(start);
-        if (i >= 0) this.userCircles.splice(i, 1); else this.userCircles.push(start);
+        const i = this.userCircles.findIndex(c => c.sq === start);
+        const same = i >= 0 && this.userCircles[i].c === col;
+        if (i >= 0) this.userCircles.splice(i, 1);
+        if (!same) this.userCircles.push({ sq: start, c: col });
         this.renderSquares();
       } else {
         const i = this.userArrows.findIndex(a => a.from === start && a.to === end);
-        if (i >= 0) this.userArrows.splice(i, 1); else this.userArrows.push({ from: start, to: end });
+        const same = i >= 0 && this.userArrows[i].color === DRAW_COLORS[col];
+        if (i >= 0) this.userArrows.splice(i, 1);
+        if (!same) this.userArrows.push({ from: start, to: end, color: DRAW_COLORS[col] });
       }
       this.renderArrows();
       return;
