@@ -696,3 +696,21 @@ a.icon-btn { color: var(--text); }
 .moves-inline .mvi { cursor: pointer; }
 .linklike { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
 .grid-2.grid-3 { grid-template-columns: repeat(3, 1fr); }
+
+/* Large screens: the board grows with the window instead of stopping at a fixed size.
+   It is limited by the window height (so nothing scrolls) and by the width left for the side panel. */
+@media (min-width: 900px) {
+  main#view { max-width: 1880px; }
+  main#view > .page { max-width: 1280px; margin-inline: auto; }
+  .stage {
+    --board: min(calc(100dvh - var(--top-h) - 110px), calc(100vw - 470px));
+    grid-template-columns: var(--board) minmax(320px, 540px);
+    justify-content: center;
+  }
+  .stage.with-evalbar { grid-template-columns: calc(var(--board) + 34px) minmax(320px, 540px); }
+  .play-stage { --board: min(calc(100dvh - var(--top-h) - 214px), calc(100vw - 500px)); }
+  :root[data-boardsize="s"] .stage { --board: min(calc(100dvh - var(--top-h) - 110px), calc(100vw - 470px), 560px); }
+  :root[data-boardsize="s"] .play-stage { --board: min(calc(100dvh - var(--top-h) - 214px), calc(100vw - 500px), 540px); }
+  :root[data-boardsize="l"] .stage { --board: min(calc(100dvh - var(--top-h) - 64px), calc(100vw - 470px)); }
+  :root[data-boardsize="l"] .play-stage { --board: min(calc(100dvh - var(--top-h) - 150px), calc(100vw - 500px)); }
+}
