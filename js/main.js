@@ -1,6 +1,7 @@
 // App shell: storage init, theme, hash router.
 import { initStore, getSettings, setSettings } from './store.js';
 import { icons, logo, $, $$ } from './ui.js';
+import { initSync } from './sync.js';
 
 const routes = {
   play: () => import('./views/play.js'),
@@ -17,11 +18,12 @@ const routes = {
   quiz: () => import('./views/quiz.js'),
   coords: () => import('./views/coords.js'),
   mistakes: () => import('./views/mistakes.js'),
+  coach: () => import('./views/coach.js'),
 };
 const TAB_OF = {
   play: 'play', games: 'play', review: 'play', puzzles: 'puzzles', rush: 'puzzles',
   openings: 'openings', trainer: 'openings', insights: 'insights', settings: 'settings',
-  analysis: 'play', learn: 'learn', quiz: 'learn', coords: 'learn', mistakes: 'puzzles',
+  analysis: 'play', learn: 'learn', quiz: 'learn', coords: 'learn', mistakes: 'puzzles', coach: 'coach',
 };
 
 const media = matchMedia('(prefers-color-scheme: dark)');
@@ -99,6 +101,7 @@ async function boot() {
   });
   window.addEventListener('hashchange', route);
   await route();
+  initSync();
   if ('serviceWorker' in navigator && !/[?&]nosw\b/.test(location.search)) {
     navigator.serviceWorker.register('sw.js').catch(err => console.warn('service worker', err));
   }

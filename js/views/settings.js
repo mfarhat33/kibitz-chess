@@ -1,7 +1,8 @@
 // Settings, progress export/import and credits.
 import * as store from '../store.js';
 import { applyTheme } from '../main.js';
-import { icons, esc, toast, dialog, confirm, downloadFile, pickFile, $ } from '../ui.js';
+import { icons, esc, toast, dialog, confirm, downloadFile, pickFile, timeAgo, $ } from '../ui.js';
+import * as sync from '../sync.js';
 
 const PIECES = [
   { id: 'cburnett', name: 'Classic' }, { id: 'merida', name: 'Merida' }, { id: 'chessnut', name: 'Chessnut' }, { id: 'fantasy', name: 'Fantasy' },
@@ -68,6 +69,7 @@ export function mount(root) {
         </div>
         <button class="btn danger" id="s-reset" type="button">${icons.trash} Erase all progress on this device</button>
       </section>
+      <section class="card stack" id="s-sync"></section>
       <section class="card stack small">
         <h3 style="margin:0">About Kibitz Chess</h3>
         <p style="margin:0">A free, private chess trainer that runs entirely in your browser. No account, no tracking, no server.</p>
@@ -139,6 +141,8 @@ export function mount(root) {
     mount(root);
   });
 
+  renderSync(root);
+
   $('#s-reset', root).addEventListener('click', async () => {
     if (await confirm('Erase all progress?', '<p>This deletes your games, puzzle rating, Rush scores and trainer lines from this browser. Export first if you want a backup.</p>', 'Erase everything', true)) {
       for (const k of store.keys()) store.del(k);
@@ -149,9 +153,64 @@ export function mount(root) {
   });
 }
 
+// ---------- sync between devices (private GitHub Gist) ----------
+let offSync = null;
+function renderSync(root) {
+  const el = $('#s-sync', root);
+  if (!el) return;
+  const c = sync.getConfig();
+  if (!c.token) {
+    el.innerHTML = `
+      <h3 style="margin:0">Sync phone and laptop</h3>
+      <p class="small muted" style="margin:0">Keeps games, reviews, puzzles, trainer lines and coach progress the same on every device, through one private GitHub Gist. Nothing else leaves your browser.</p>
+      <ol class="small" style="margin:0;padding-left:1.2em">
+        <li>On GitHub open <a href="https://github.com/settings/tokens/new?scopes=gist&description=Kibitz%20Chess%20sync" target="_blank" rel="noopener">Settings → Developer settings → Tokens (classic)</a>. Tick only <b>gist</b>, choose an expiry, and generate.</li>
+        <li>Paste the token below on each device. The first device creates the Gist; the others find it.</li>
+      </ol>
+      <div class="row nowrap"><input type="password" id="sy-token" placeholder="ghp_…" autocomplete="off" spellcheck="false" class="grow" aria-label="GitHub token"><button class="btn primary" id="sy-go" type="button">Connect</button></div>
+      <p class="tiny muted" style="margin:0">The token is stored only in this browser and is never exported or uploaded. Use a token with the gist scope only.</p>`;
+    $('#sy-go', el).addEventListener('click', async () => {
+      const b = $('#sy-go', el);
+      b.disabled = true;
+      b.innerHTML = '<span class="spinner"></span>';
+      try {
+        const r = await sync.connect($('#sy-token', el).value);
+        if (!r.ok) throw new Error(r.error);
+        toast(r.added?.games ? `Synced: ${r.added.games} games added from your other device` : 'Sync is on');
+        mount(root);
+      } catch (err) {
+        b.disabled = false;
+        b.textContent = 'Connect';
+        dialog({ title: 'Could not connect', body: `<p>${esc(err.message || err)}</p>` });
+      }
+    });
+    return;
+  }
+  const draw = () => {
+    const x = sync.getConfig();
+    if (!x.token) { renderSync(root); return; }
+    el.innerHTML = `
+      <div class="row between"><h3 style="margin:0">Sync phone and laptop</h3><span class="tiny muted">${x.busy ? '<span class="spinner"></span> syncing' : 'on'}</span></div>
+      <p class="small" style="margin:0">${x.lastSync ? `Last synced ${esc(timeAgo(x.lastSync))}.` : 'Not synced yet.'} Syncs when you open the app, after each game and when you leave it.</p>
+      ${x.lastError ? `<div class="status bad small">${esc(x.lastError)}</div>` : ''}
+      <div class="grid-2"><button class="btn" id="sy-now" type="button" ${x.busy ? 'disabled' : ''}>${icons.retry} Sync now</button><button class="btn" id="sy-off" type="button">${icons.x} Disconnect</button></div>
+      ${x.gistId ? `<p class="tiny muted" style="margin:0">Stored in your private Gist <a href="https://gist.github.com/${esc(x.gistId)}" target="_blank" rel="noopener">${esc(x.gistId.slice(0, 8))}…</a>.</p>` : ''}`;
+    $('#sy-now', el)?.addEventListener('click', async () => {
+      const r = await sync.syncNow({ force: true });
+      if (r.ok) toast(r.added?.games ? `Synced: ${r.added.games} games added` : 'Synced');
+    });
+    $('#sy-off', el).addEventListener('click', async () => {
+      if (await confirm('Turn off sync on this device?', '<p class="muted">Your progress stays on this device and in the Gist. You can reconnect with a token later.</p>', 'Disconnect')) sync.disconnect();
+    });
+  };
+  offSync?.();
+  offSync = sync.onSyncChange(() => { if (el.isConnected) draw(); else { offSync?.(); offSync = null; } });
+  draw();
+}
+
 const SWATCH = {
   slate: ['#e4e0d4', '#7d93a6'], walnut: ['#ead7b6', '#a7774e'], ocean: ['#dae5ea', '#5a86a3'],
   olive: ['#e7e3c8', '#9a9a63'], mono: ['#d8d8d8', '#8c8c8c'],
 };
 
-export function unmount() {}
+export function unmount() { offSync?.(); offSync = null; }

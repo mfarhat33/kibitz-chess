@@ -1,5 +1,5 @@
 // Offline support: network first (so updates arrive straight away), cache as fallback.
-const CACHE = 'kibitz-v3';
+const CACHE = 'kibitz-v4';
 const PIECES = ['wK', 'wQ', 'wR', 'wB', 'wN', 'wP', 'bK', 'bQ', 'bR', 'bB', 'bN', 'bP'];
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest', 'img/icon.svg', 'img/icon-192.png',
@@ -9,6 +9,7 @@ const SHELL = [
   'js/views/play.js', 'js/views/games.js', 'js/views/review.js', 'js/views/puzzles.js', 'js/views/rush.js',
   'js/views/openings.js', 'js/views/trainer.js', 'js/views/insights.js', 'js/views/settings.js', 'js/views/tabs.js',
   'js/views/analysis-board.js', 'js/views/learn.js', 'js/views/quiz.js', 'js/views/coords.js', 'js/views/mistakes.js', 'js/game-import.js',
+  'js/coach.js', 'js/sync.js', 'js/views/coach.js',
   'engine/stockfish-19-lite-single.js', 'engine/stockfish-19-lite-single.wasm',
   'data/openings.json', 'data/puzzles/index.json',
   ...['cburnett', 'merida', 'chessnut', 'fantasy'].flatMap(set => PIECES.map(p => `img/pieces/${set}/${p}.svg`)),

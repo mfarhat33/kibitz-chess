@@ -203,6 +203,11 @@ function sanitize(data) {
           ease: num(c?.ease, 2.5), interval: num(c?.interval), reps: num(c?.reps), lapses: num(c?.lapses), due: num(c?.due), last: num(c?.last),
         }])),
       }; break;
+      case 'coach': out[k] = {
+        // ticks on the 7-day plan: "<weekStart>:<day>:<item>" -> time ticked
+        done: Object.fromEntries(Object.entries(v?.done || {}).filter(([id]) => /^\d{10,14}:\d:\d$/.test(id)).slice(-500).map(([id, t]) => [id, num(t)])),
+        fixes: Object.fromEntries(Object.entries(v?.fixes || {}).filter(([id]) => typeof id === 'string' && id.length < 200).slice(-300).map(([id, t]) => [id, num(t)])),
+      }; break;
       case 'daily': out[k] = { days: Object.fromEntries(Object.entries(v?.days || {}).filter(([d]) => /^\d{4}-\d{2}-\d{2}$/.test(d)).map(([d, x]) => [d, x === 1 ? 1 : 0])) }; break;
       case 'settings': out[k] = {
         theme: ['system', 'light', 'dark'].includes(v?.theme) ? v.theme : 'system',
@@ -271,6 +276,8 @@ export function mergeData(local, incoming) {
       const cards = { ...(v?.cards || {}) };
       for (const [id, c] of Object.entries(local[k]?.cards || {})) if (!cards[id] || (c.last || 0) > (cards[id].last || 0)) cards[id] = c;
       out[k] = { cards };
+    } else if (k === 'coach') {
+      out[k] = { done: { ...(v?.done || {}), ...(local[k]?.done || {}) }, fixes: { ...(v?.fixes || {}), ...(local[k]?.fixes || {}) } };
     } else if (k === 'daily') {
       out[k] = { days: { ...(v?.days || {}), ...Object.fromEntries(Object.entries(local[k]?.days || {}).filter(([d, x]) => x === 1 || !(d in (v?.days || {})))) } };
     } else if (!(k in local)) {

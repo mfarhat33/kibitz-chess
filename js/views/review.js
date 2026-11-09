@@ -32,7 +32,7 @@ export function sidesOf(game) {
   return { names: { [game.userColor]: 'You', [opp]: `${game.botName}${label}` }, viewer: game.userColor };
 }
 
-export async function mount(root, [id], isCurrent = () => true) {
+export async function mount(root, [id, plyParam], isCurrent = () => true) {
   const game = store.get('game:' + id);
   if (!game) {
     root.innerHTML = `<div class="page"><div class="card empty">That game was not found. <a href="#/games">See all games</a></div></div>`;
@@ -48,7 +48,8 @@ export async function mount(root, [id], isCurrent = () => true) {
   const speakNames = { w: names.w.replace(/ \([^)]*\)$/, ''), b: names.b.replace(/ \([^)]*\)$/, '') };
   const user = game.userColor;
   const settings = store.getSettings();
-  let cur = -1;
+  // #/review/<id>/<ply> opens at that move (the coach links to the exact mistake)
+  let cur = /^\d+$/.test(plyParam || '') ? Math.min(+plyParam, game.moves.length - 1) : -1;
   let alive = true;
   let graph = null;
   let retry = null;
@@ -789,7 +790,7 @@ export async function mount(root, [id], isCurrent = () => true) {
   };
 
   renderInfo();
-  go(-1);
+  go(cur);
   // reviews made before the second-best line was stored are redone so new labels can appear
   if (!game.review || !game.review.second) await runAnalysis(DEPTHS[settings.reviewDepth] || DEPTHS.standard);
   else {
