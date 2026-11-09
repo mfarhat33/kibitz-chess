@@ -11,6 +11,12 @@ import {
   CATS, weeklyReport, reportWeek, weekStart, weekPlan, adviceFor, trendText, patternStats, themeFor,
 } from '../coach.js';
 import * as sync from '../sync.js';
+import { openingFixes, sparringPositions, levelFor } from '../coach.js';
+import { addLine } from './trainer.js';
+import { playFromPosition } from './tabs.js';
+import { performanceRating } from './insights.js';
+import { LEVELS } from '../bot.js';
+import { uciLineToSan, formatLine, START_FEN } from '../chessutil.js';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const IMPORT_MAX = 200;
@@ -101,6 +107,9 @@ export function mount(root) {
         <div class="stack" style="gap:6px">${plan.map(d => dayRow(d, thisWeek, done, todayIdx)).join('')}</div>
       </section>
 
+      <section class="card stack" id="c-fixes"></section>
+      <section class="card stack" id="c-spar"></section>
+
       <section class="card stack">
         <h3 style="margin:0">All-time picture</h3>
         <div id="c-all"></div>
@@ -135,6 +144,7 @@ export function mount(root) {
   // puzzle links pick the theme first
   root.querySelectorAll('[data-theme]').forEach(a => a.addEventListener('click', () => store.set('puzzles.theme', a.dataset.theme)));
 
+  if (!empty) { renderFixes(root, games); renderSparring(root, games); }
   wireImport(root);
   const drawBatch = () => renderBatch(root);
   batchListeners.add(drawBatch);
@@ -172,6 +182,60 @@ function dayRow(d, week, done, today) {
       return `<label class="row nowrap small" style="gap:8px;align-items:flex-start"><input type="checkbox" data-tick="${id}" ${done[id] ? 'checked' : ''} style="margin-top:3px"><span class="grow">${esc(it.text)} <a href="${HREF[it.kind](it)}"${it.theme != null ? ` data-theme="${esc(it.theme)}"` : ''}>Go</a> <span class="tiny muted">${it.minutes} min</span></span></label>`;
     }).join('')}</div>
   </div>`;
+}
+
+// ---------- opening fixes ----------
+function renderFixes(root, games) {
+  const el = $('#c-fixes', root);
+  const fixes = openingFixes(games).slice(0, 6);
+  const drilled = store.get('coach', {}).fixes || {};
+  el.innerHTML = `<div class="row between"><h3 style="margin:0">Opening fixes</h3><span class="tiny muted">where you keep going wrong</span></div>
+    ${fixes.length ? `<div class="list">${fixes.map((f, i) => {
+      const line = formatLine(START_FEN, uciLineToSan(START_FEN, f.prefix));
+      return `<div class="list-item" style="align-items:flex-start">
+        <span class="color-dot ${f.color}"></span>
+        <div class="grow stack" style="gap:4px">
+          <div class="t">${esc(f.opening || 'Opening')}</div>
+          <div class="small">${line ? `After ${esc(line)}, y` : 'Y'}ou play <b class="tq-${f.count > 1 || f.loss >= 20 ? 'blunder' : 'mistake'}">${esc(f.playedSan)}</b>${f.count > 1 ? ` (${f.count} games)` : ''}, losing ${Math.round(f.loss)}% winning chances. Play <b>${esc(f.bestSan)}</b>.</div>
+          <div class="row" style="gap:8px"><button class="btn small ${drilled[f.key] ? '' : 'primary'}" type="button" data-fix="${i}">${drilled[f.key] ? `${icons.check} In trainer` : `${icons.book} Drill this line`}</button><a class="btn small" href="#/review/${encodeURIComponent(f.gameIds[f.gameIds.length - 1])}/${f.prefix.length}">${icons.search} See it</a></div>
+        </div></div>`;
+    }).join('')}</div>` : '<p class="small muted" style="margin:0">No repeated opening errors yet. They appear once the same bad move shows up in two games (or once as a blunder).</p>'}`;
+  el.querySelectorAll('[data-fix]').forEach(b => b.addEventListener('click', () => {
+    const f = fixes[+b.dataset.fix];
+    const res = addLine({ name: `Fix: ${f.opening || 'opening'} (${f.bestSan} not ${f.playedSan})`, eco: f.eco, color: f.color, moves: [...f.prefix, f.best] });
+    const c = store.get('coach', {});
+    store.set('coach', { ...c, fixes: { ...(c.fixes || {}), [f.key]: Date.now() } });
+    toast(res === 'exists' ? 'Already in your trainer' : 'Added to the opening trainer');
+    b.classList.remove('primary');
+    b.innerHTML = `${icons.check} In trainer`;
+  }));
+}
+
+// ---------- sparring ----------
+export function sparringLevel(games) {
+  const chron = games.filter(g => !g.spectator && g.userResult).sort((a, b) => a.date - b.date);
+  const perf = performanceRating(chron);
+  return levelFor(perf?.value || 1100, LEVELS);
+}
+
+function renderSparring(root, games) {
+  const el = $('#c-spar', root);
+  const kinds = [
+    ['endgame', 'Replay a lost endgame', 'An endgame you threw away. Win it this time.'],
+    ['middlegame', 'Replay a middlegame you blew', 'The position just before a game-losing error.'],
+    ['opening', 'Replay an opening disaster', 'Right before your opening blunder.'],
+  ].map(([k, label, sub]) => ({ k, label, sub, list: sparringPositions(games, k).slice(0, 12) }));
+  const lvl = LEVELS[sparringLevel(games)];
+  el.innerHTML = `<div class="row between"><h3 style="margin:0">Weak-spot sparring</h3><span class="tiny muted">vs ${esc(lvl.name)} (${lvl.elo})</span></div>
+    <p class="small muted" style="margin:0">Play on from your own bad positions against a bot at your level, from the move where it went wrong.</p>
+    <div class="stack" style="gap:8px">${kinds.map(x => `<button class="btn block" type="button" data-spar="${x.k}" ${x.list.length ? '' : 'disabled'} style="justify-content:flex-start;text-align:left">${icons.start}<span class="grow">${esc(x.label)}<span class="tiny muted" style="display:block;font-weight:400">${x.list.length ? `${esc(x.sub)} ${x.list.length} position${x.list.length === 1 ? '' : 's'}.` : 'None yet.'}</span></span></button>`).join('')}</div>`;
+  el.querySelectorAll('[data-spar]').forEach(b => b.addEventListener('click', async () => {
+    const list = kinds.find(x => x.k === b.dataset.spar).list;
+    const pick = list[Math.floor(Math.random() * list.length)];
+    store.set('play.prefs', { ...store.get('play.prefs', {}), level: sparringLevel(store.allGames()), mode: 'bot', color: pick.color });
+    const r = await playFromPosition(pick.fen);
+    if (r === 'over') toast('That position is already over. Try again.');
+  }));
 }
 
 function wireImport(root) {

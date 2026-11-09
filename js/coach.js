@@ -374,7 +374,7 @@ export function openingFixes(games, { minCount = 2 } = {}) {
       const loss = r.loss?.[i] ?? 0;
       if (loss < 8 || r.labels[i] === 'book' || !r.best[i] || r.best[i] === g.moves[i]) continue;
       const key = posKey(fens[i]) + '|' + g.moves[i];
-      const x = groups.get(key) || { key, fen: fens[i], color: g.userColor, prefix: g.moves.slice(0, i), played: g.moves[i], bests: {}, count: 0, lossSum: 0, blunder: false, opening: g.opening?.name || null, gameIds: [] };
+      const x = groups.get(key) || { key, fen: fens[i], color: g.userColor, prefix: g.moves.slice(0, i), played: g.moves[i], bests: {}, count: 0, lossSum: 0, blunder: false, opening: g.opening?.name || null, eco: g.opening?.eco || '', gameIds: [] };
       x.count++;
       x.lossSum += loss;
       x.blunder = x.blunder || r.labels[i] === 'blunder';
@@ -388,7 +388,7 @@ export function openingFixes(games, { minCount = 2 } = {}) {
     const best = Object.entries(x.bests).sort((a, b) => b[1] - a[1])[0][0];
     const [playedSan] = uciLineToSan(x.fen, [x.played]);
     const [bestSan] = uciLineToSan(x.fen, [best]);
-    return { key: x.key, fen: x.fen, color: x.color, prefix: x.prefix, played: x.played, best, playedSan, bestSan, count: x.count, loss: x.lossSum / x.count, opening: x.opening, gameIds: x.gameIds };
+    return { key: x.key, fen: x.fen, color: x.color, prefix: x.prefix, played: x.played, best, playedSan, bestSan, count: x.count, loss: x.lossSum / x.count, opening: x.opening, eco: x.eco, gameIds: x.gameIds };
   }).sort((a, b) => b.count * b.loss - a.count * a.loss);
 }
 
